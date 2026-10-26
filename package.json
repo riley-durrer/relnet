@@ -1,0 +1,28 @@
+{
+  "name": "relnet",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "compile": "aztec compile --workspace",
+    "codegen": "aztec codegen target --outdir src/artifacts",
+    "build": "npm run compile && npm run codegen",
+    "test": "tsx src/test/e2e/agreement.e2e.ts && tsx src/test/e2e/escrow.e2e.ts && tsx src/test/e2e/performance_proof.e2e.ts && tsx src/test/e2e/hostile.e2e.ts",
+    "funding": "tsx src/funding/main.ts",
+    "test:funding": "tsx src/test/funding.test.ts",
+    "sandbox": "aztec start --local-network"
+  },
+  "dependencies": {
+    "@aztec/accounts": "5.2.1",
+    "@aztec/aztec.js": "5.2.1",
+    "@aztec/stdlib": "5.2.1",
+    "@aztec/protocol-contracts": "5.2.1",
+    "@aztec/wallets": "5.2.1",
+    "@aztec/noir-contracts.js": "5.2.1",
+    "@aztec/constants": "5.2.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  }
+}

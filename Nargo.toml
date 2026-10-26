@@ -1,0 +1,8 @@
+[workspace]
+members = [
+    "contracts/agreement",
+    "contracts/escrow",
+    "contracts/audit_log",
+    "contracts/performance_proof",
+    "contracts/token",
+]
