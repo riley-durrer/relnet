@@ -68,6 +68,13 @@ first exchange of a deal code is the trust root, so a wrong fingerprint accepted
 read A2A's security-considerations section (section 13) in full, so this is not a complete review against it.
 The agent-key to on-chain-address link is not cryptographic: the deal code carries both, and people confirm them.
 
+## Example companies and agent testing
+
+`examples/` has three fictional companies with company-written rules (`policy.md`) and approved limits
+(`mandate.json`): two well written, one deliberately poor. A guard runs any agent's output through every layer of the
+system and reports which one caught what, and a mandate linter warns a person about risky limits before they approve
+them. See [examples/README.md](examples/README.md). The included outputs are scripted examples, not observed model behavior.
+
 ## What exists today
 
 | Contract | Purpose | State |
@@ -175,7 +182,7 @@ This is a plan, not something built or validated.
 | Signal | Where relnet stands |
 |---|---|
 | Industrial usefulness | Standing agreements where agents negotiate, people sign, and escrow plus a late-price rule run the deal. Pilot not run. |
-| Robustness | 48 tests pass: 13 hostile or mistaken-agent cases against the contracts and 11 against the agent channel, each checking the refusal reason (plus 5 funding-service unit tests). Not load tested. |
+| Robustness | 55 tests pass: 13 hostile or mistaken-agent cases against the contracts and 11 against the agent channel, and 7 for the example-agent guard and mandate linter, each checking the refusal reason (plus 5 funding-service unit tests). Not load tested. |
 | Data sovereignty | Everything runs on the participant's machine. The supplier's performance history stays in a private note; only a threshold is published. Terms and escrow state are public by design. |
 | Measured performance | Latency per operation on one machine. No throughput, cost or fiat-vs-stablecoin comparison yet. |
 | Enterprise readiness | One-command demo and UI, README, typed tests, human sign-off. Not audited; sandbox only. |
@@ -282,6 +289,7 @@ src/channel/*.ts                                                 A2A channel: id
 src/agents/runtime.ts                                            decision log, self-correcting buyer agent
 src/utils/sponsored_fee.ts                                       registers sandbox SponsoredFPC for fees
 src/test/*.test.ts, src/test/e2e/*.e2e.ts                        unit and e2e tests (tsx, node assert style)
+src/examples/*.ts, examples/companies/                           example companies, guard, scenarios, prompts
 src/demo/main.ts                                                 npm run demo
 src/ui/                                                          operator page (local server + static HTML)
 src/funding/                                                     simulated funding service

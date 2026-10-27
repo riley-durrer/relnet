@@ -1,0 +1,17 @@
+{
+  "company": "Lone Star Assembly",
+  "side": "buyer",
+  "volume": { "min": 10, "max": 200 },
+  "receive_bps": 5000,
+  "late_period_secs": 86400,
+  "ranges": {
+    "price_cents": { "min": 400, "max": 560 },
+    "ship_bps": { "min": 1000, "max": 3000 },
+    "lead_time_secs": { "min": 604800, "max": 1814400 },
+    "grace_secs": { "min": 0, "max": 172800 },
+    "late_bps_per_period": { "min": 200, "max": 500 },
+    "late_cap_bps": { "min": 1000, "max": 2000 },
+    "cancel_after_secs": { "min": 604800, "max": 1814400 },
+    "deemed_acceptance_secs": { "min": 432000, "max": 1209600 }
+  }
+}

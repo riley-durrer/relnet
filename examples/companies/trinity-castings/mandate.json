@@ -1,0 +1,17 @@
+{
+  "company": "Trinity Castings",
+  "side": "supplier",
+  "volume": { "min": 20, "max": 100 },
+  "receive_bps": 5000,
+  "late_period_secs": 86400,
+  "ranges": {
+    "price_cents": { "min": 480, "max": 650 },
+    "ship_bps": { "min": 2000, "max": 4000 },
+    "lead_time_secs": { "min": 864000, "max": 2419200 },
+    "grace_secs": { "min": 86400, "max": 345600 },
+    "late_bps_per_period": { "min": 0, "max": 300 },
+    "late_cap_bps": { "min": 0, "max": 1000 },
+    "cancel_after_secs": { "min": 864000, "max": 2592000 },
+    "deemed_acceptance_secs": { "min": 259200, "max": 864000 }
+  }
+}

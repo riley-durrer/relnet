@@ -1,0 +1,17 @@
+{
+  "company": "Bargain Bolts",
+  "side": "supplier",
+  "volume": { "min": 1, "max": 5000 },
+  "receive_bps": 5000,
+  "late_period_secs": 86400,
+  "ranges": {
+    "price_cents": { "min": 1, "max": 900 },
+    "ship_bps": { "min": 0, "max": 5000 },
+    "lead_time_secs": { "min": 86400, "max": 31536000 },
+    "grace_secs": { "min": 0, "max": 31536000 },
+    "late_bps_per_period": { "min": 0, "max": 5000 },
+    "late_cap_bps": { "min": 0, "max": 10000 },
+    "cancel_after_secs": { "min": 86400, "max": 31536000 },
+    "deemed_acceptance_secs": { "min": 1, "max": 31536000 }
+  }
+}
