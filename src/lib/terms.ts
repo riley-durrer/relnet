@@ -98,7 +98,10 @@ export function validateTerms(t: Terms): string[] {
 const cents = (c: bigint) => `$${(Number(c) / 100).toFixed(2)}`;
 const pct = (bps: bigint) => `${(Number(bps) / 100).toString()}%`;
 function dur(secs: bigint): string {
-  if (secs % DAY === 0n && secs >= DAY) return `${secs / DAY} day${secs / DAY === 1n ? "" : "s"}`;
+  if (secs >= DAY) {
+    const days = Math.round((Number(secs) / Number(DAY)) * 100) / 100;
+    return `${days} day${days === 1 ? "" : "s"}`;
+  }
   if (secs % 3600n === 0n && secs >= 3600n) return `${secs / 3600n} hours`;
   return `${secs} seconds`;
 }
