@@ -8,6 +8,9 @@ Agents are untrusted. Price, volume bands, escrow milestones and release rules a
 by contract code on-chain, not by any LLM or agent. A supplier can also prove, in zero
 knowledge, that its on-time delivery rate meets a threshold without revealing order data.
 
+**Try it:** with the local network running, `npm run demo` plays a full narrated run, and
+`npm run ui` opens an operator page (see [Run](#run)).
+
 **Status: hackathon work in progress. Testnet/local sandbox only, fictional entities, no real
 funds. Nothing here is a compliance claim.**
 
@@ -21,8 +24,90 @@ funds. Nothing here is a compliance claim.**
 | `RelnetPerformanceProof` | Supplier keeps one private `(on_time_count, total_count)` note. `prove_on_time_rate(threshold_pct)` asserts the rate in a private circuit and publishes only the threshold. | Done, 4 tests |
 | `RelnetAuditLog` | Public hash chain of state transitions. | **Stub only** |
 
-Not built yet: SDK/gateway, FastAPI layer, reference agents and hostile-agent harness, operator
-UI, docker-compose one-command boot, simulation results.
+Also built: `npm run demo` (narrated end-to-end run), `npm run ui` (local operator page), a
+simulated funding service, and a 14-case hostile-agent test suite.
+
+Not built: audit-log contract, SDK/gateway, FastAPI layer, reference LLM agents, docker-compose
+one-command boot, a multi-month simulation, a supplier/part knowledge graph, an MES/ERP adapter.
+
+## Architecture
+
+```
+  buyer agent      supplier agent      carrier agent        (untrusted, any software)
+       \               |                  /
+        \              |                 /       signed calls from each party's own wallet
+         v             v                v
+  +--------------------------------------------------------------+
+  |  Aztec local network (runs on the participant's own machine) |
+  |                                                              |
+  |  RelnetAgreement   price, volume band, parties   (public)    |
+  |        | place_call_off: private entry, public assertion     |
+  |        v                                                     |
+  |  RelnetEscrow      30% ship / 50% receive / 20% inspect      |
+  |        |  record_outcome(on_time)   (escrow-only caller)     |
+  |        v                                                     |
+  |  RelnetPerformanceProof   supplier's private tally note      |
+  |        prove_on_time_rate(threshold) -> publishes threshold  |
+  |                                                              |
+  |  RelnetCoin        settlement token (demo grade)             |
+  +--------------------------------------------------------------+
+        ^
+        | read-only
+  operator page (npm run ui)  /  demo script (npm run demo)
+```
+
+No language model sits in the enforcement path. Agents may be LLM-driven; the contracts decide
+what is accepted.
+
+## Hostile-agent results
+
+Each row is a real attempt against a deployed instance; the "baseline" is a modeled ledger that
+trusts its agents (not a measured competitor). Reproduce with `npm run demo`; the full 14-case
+suite is `src/test/e2e/hostile.e2e.ts`.
+
+| Attack | Baseline (trusts agents) | relnet |
+|---|---|---|
+| Order outside the volume band | accepted | blocked |
+| Order at an off-contract price | accepted | blocked |
+| Non-party places an order | accepted | blocked |
+| Non-admin mints tokens | accepted | blocked |
+| Forged on-time delivery record | accepted | blocked |
+| Open a call-off with no funds sent | accepted | blocked |
+| Non-buyer releases escrow at inspection | accepted | blocked |
+| Re-use a closed call-off | accepted | blocked |
+| Non-arbiter issues a ruling | accepted | blocked |
+| Absorb the same outcome twice | accepted | blocked |
+| Absorb an outcome the escrow never recorded | accepted | blocked |
+
+Measured on one laptop against the local network: about 3.7 s median per transaction. Proving
+mode of the local network was not verified, so read this as execution latency, not a benchmark.
+
+## Path to a real floor (pilot plan)
+
+This is a plan, not something built or validated.
+
+1. **Scope:** one buyer and two to three suppliers on a single part family under an existing
+   supply agreement. Mirror the existing terms (price, volume band, milestones) in the contract.
+2. **Shadow mode (weeks 1-4):** run relnet alongside the current PO/ERP process with no money
+   moving. Compare what the contract would have accepted or rejected with what staff did.
+3. **Attestation hardening:** replace public milestone calls with signed attestations from
+   dock scanners or carrier systems, and add the audit-log contract.
+4. **Settlement rails:** connect a licensed provider behind the `FundingProvider` interface for
+   fiat to stablecoin. Not implemented today.
+5. **Network:** move from the local sandbox to a public Aztec network once its tooling is stable.
+6. **Exit criteria:** disputes resolved without manual reconciliation, and fewer days from
+   receipt to supplier payment than the current process. Neither is measured yet.
+
+## How this maps to the challenge signals
+
+| Signal | Where relnet stands |
+|---|---|
+| Industrial usefulness | Standing agreements with milestone escrow for vendor settlement. Pilot not run. |
+| Robustness | 14 hostile cases plus 17 functional tests pass on the local network. Not load tested. |
+| Data sovereignty | Everything runs on the participant's machine. The supplier's performance history stays in a private note; only a threshold is published. Terms and escrow state are public by design. |
+| Measured performance | Latency per transaction on one machine. No throughput, cost or fiat-vs-stablecoin comparison yet. |
+| Enterprise readiness | One-command demo and UI, README, typed tests. Not audited; sandbox only. |
+| Edge-to-AI pipeline | Agents (any software or LLM) act through the contracts. No sensors or edge devices are integrated. |
 
 ## Design decisions
 
