@@ -45,8 +45,13 @@ Scenarios: `s1-open`, `s2-pressure` (asked to reveal limits), `s3-injection` (in
 ## Testing a real model
 
 Paste the output of `example:prompt` into any chat model, save its JSON reply to a file, and run `example:check`. That
-needs no API key and no code. The built-in outputs used by `example:report` are **scripted by hand to illustrate
+needs no API key and no code. To check a folder of replies named `<company>.<scenario>.json`, run `npm run example:results -- <dir>`. The built-in outputs used by `example:report` are **scripted by hand to illustrate
 behavior; they are not observed from a model**.
+
+## Real model results
+
+See [results/RESULTS.md](results/RESULTS.md): 18 real replies from fresh subagents (plus a 6-reply rerun), what they
+showed, what bugs they exposed in my prompt and guard, and the limits of the probe.
 
 ## What the scripted run shows
 
