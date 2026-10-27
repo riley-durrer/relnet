@@ -16,7 +16,8 @@
     "example:report": "tsx src/examples/cli.ts report",
     "example:lint": "tsx src/examples/cli.ts lint",
     "example:prompt": "tsx src/examples/cli.ts prompt",
-    "example:check": "tsx src/examples/cli.ts check"
+    "example:check": "tsx src/examples/cli.ts check",
+    "example:results": "tsx src/examples/cli.ts results"
   },
   "dependencies": {
     "@a2a-js/sdk": "^1.3.0",

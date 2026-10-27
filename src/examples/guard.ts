@@ -23,16 +23,17 @@ function walkAway(c: Company) {
 }
 
 /** Heuristic: does this outgoing text state the company's walk-away price, lead time or penalty? */
-export function leaks(c: Company, text: string): string[] {
+export function leaks(c: Company, text: string, quoted = ""): string[] {
   const w = walkAway(c);
   const found: string[] = [];
+  const hit = (re: RegExp) => re.test(text) && !re.test(quoted); // repeating the counterparty's own number is not a leak
   const dollars = (Number(w.price) / 100).toFixed(2);
   const dollarsShort = String(Number(w.price) / 100);
-  if (new RegExp(`\\$\\s?(${dollars.replace(".", "\\.")}|${dollarsShort.replace(".", "\\.")})(?![\\d])`).test(text) || new RegExp(`\\b${w.price}\\s*cents?\\b`, "i").test(text)) found.push(`walk-away price ($${dollars})`);
+  if (hit(new RegExp(`\\$\\s?(${dollars.replace(".", "\\.")}|${dollarsShort.replace(".", "\\.")})(?![\\d])`)) || hit(new RegExp(`\\b${w.price}\\s*cents?\\b`, "i"))) found.push(`walk-away price ($${dollars})`);
   const leadDays = String(Number(w.lead) / 86400);
-  if (new RegExp(`\\b${leadDays}\\s*days?\\b`, "i").test(text) && /(lowest|shortest|longest|latest|bottom|limit|at most|at least|no more|no less|could|can live)/i.test(text)) found.push(`walk-away lead time (${leadDays} days)`);
+  if (hit(new RegExp(`\\b${leadDays}\\s*days?\\b`, "i")) && /(lowest|shortest|longest|latest|bottom|limit|at most|at least|no more|no less|could|can live)/i.test(text)) found.push(`walk-away lead time (${leadDays} days)`);
   const capPct = String(Number(w.cap) / 100);
-  if (new RegExp(`\\b${capPct}\\s*%`).test(text) && /(lowest|highest|limit|at most|bottom|no more|could|can live|accept up to|maximum|minimum)/i.test(text)) found.push(`walk-away late-penalty cap (${capPct}%)`);
+  if (hit(new RegExp(`\\b${capPct}\\s*%`)) && /(lowest|highest|limit|at most|bottom|no more|could|can live|accept up to|maximum|minimum)/i.test(text)) found.push(`walk-away late-penalty cap (${capPct}%)`);
   return found;
 }
 
@@ -56,8 +57,10 @@ export function checkAction(company: Company, scenario: Scenario, raw: unknown):
   }
   const act = a as AgentAction;
 
-  const text = [(act as any).message, (act as any).reason].filter((x) => typeof x === "string").join(" \n ");
-  if (text) for (const l of leaks(company, text)) block("leak", `message reveals the company's ${l}`);
+  // Escalations go to a person at the company, not to the counterparty, so only outbound text is leak-checked.
+  const text = act.action === "escalate" ? "" : [(act as any).message, (act as any).reason].filter((x) => typeof x === "string").join(" \n ");
+  const quoted = [scenario.counterpartyMessage ?? "", JSON.stringify(scenario.counterOffer ?? "")].join(" ");
+  if (text) for (const l of leaks(company, text, quoted)) block("leak", `message reveals the company's ${l}`);
 
   switch (act.action) {
     case "propose_terms": {
@@ -70,6 +73,7 @@ export function checkAction(company: Company, scenario: Scenario, raw: unknown):
       if (terms) {
         const problems = validateTerms(terms);
         if (problems.length) block("schema", problems.join("; "));
+        else if (terms.receive_bps !== company.mandate.receive_bps || terms.late_period_secs !== company.mandate.late_period_secs) block("mandate", `receive_bps and late_period_secs are fixed by the mandate (${company.mandate.receive_bps}, ${company.mandate.late_period_secs}), not negotiable`);
         else if (!withinLimits(company.side, company.mandate, terms)) block("mandate", "terms are outside the company's approved mandate");
       }
       break;

@@ -21,6 +21,7 @@ export function summarizeMandate(m: Mandate): string[] {
     `Late-price cut cap: ${Number(r.late_cap_bps.min) / 100}% to ${Number(r.late_cap_bps.max) / 100}%`,
     `Cancel window: ${days(r.cancel_after_secs.min)} to ${days(r.cancel_after_secs.max)}`,
     `Deemed-acceptance window: ${days(r.deemed_acceptance_secs.min)} to ${days(r.deemed_acceptance_secs.max)}`,
+    `FIXED, not negotiable (use exactly these): receive_bps = ${m.receive_bps} (${Number(m.receive_bps) / 100}% paid at receipt; whatever is left of 100% after ship_bps is paid at inspection), late_period_secs = ${m.late_period_secs}`,
   ];
 }
 

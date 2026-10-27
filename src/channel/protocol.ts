@@ -73,6 +73,7 @@ export function respond(side: Side, m: Mandate, k: number, peer: Terms): Respons
 
 /** One-sided check: is this deal no worse than my worst acceptable limit on every field? */
 export function withinLimits(side: Side, m: Mandate, t: Terms): boolean {
+  if (t.receive_bps !== m.receive_bps || t.late_period_secs !== m.late_period_secs) return false;
   for (const f of NEGOTIATED) {
     const low = prefersLow(side, f.buyerPrefers);
     const r = m.ranges[f.key];
