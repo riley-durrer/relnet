@@ -54,6 +54,7 @@ const callOffs: CallOff[] = [];
 let nextId = 1;
 let provenThreshold = 0;
 let attackSeq = 1000;
+let clockStart = 0;
 
 const mandates: { buyer: Mandate; supplier: Mandate } = {
   buyer: structuredClone(EXAMPLE_BUYER_MANDATE),
@@ -119,6 +120,7 @@ async function state() {
     signed,
     agreementVersion: version,
     chainTime,
+    clockStart,
     dayLength: Number(DAY_SECS),
     callOffs,
     balances,
@@ -159,6 +161,7 @@ async function proposeOnChain() {
   if (!negotiated) throw new Error("Negotiate first");
   const onChain = scaleTime(negotiated.terms, DAY_SECS);
   world = await setup(onChain, false);
+  clockStart = Number(await world.chainNow());
   callOffs.length = 0;
   nextId = 1;
   provenThreshold = 0;

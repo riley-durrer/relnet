@@ -21,8 +21,8 @@
   header h1 { margin: 0; font-size: 20px; }
   header p { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
   main { display: grid; gap: 16px; padding: 16px; max-width: 1200px; margin: 0 auto; grid-template-columns: 1fr; }
-  @media (min-width: 900px) { .two { grid-template-columns: 1fr 1fr; } .three { grid-template-columns: 1fr 1.3fr 1fr; align-items: start; } }
   .grid { display: grid; gap: 16px; grid-template-columns: 1fr; }
+  @media (min-width: 900px) { .two { grid-template-columns: 1fr 1fr; } .three { grid-template-columns: 1fr 1.3fr 1fr; align-items: start; } }
   section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
   h2 { margin: 0 0 4px; font-size: 16px; }
   .muted { color: var(--muted); font-size: 14px; }
@@ -214,7 +214,7 @@ function render(s) {
   $("bBuyer").textContent = money(s.balances.buyer);
   $("bEscrow").textContent = money(s.balances.escrow);
   $("bSupplier").textContent = money(s.balances.supplier);
-  $("clock").textContent = s.chainTime ? "day " + Math.floor(s.chainTime / s.dayLength) % 100000 : "";
+  $("clock").textContent = s.chainTime ? "day " + Math.max(0, Math.floor((s.chainTime - s.clockStart) / s.dayLength)) : "";
 
   $("list").innerHTML = s.callOffs.length ? "" : '<p class="muted">No orders yet.</p>';
   for (const c of s.callOffs.slice().reverse()) {
