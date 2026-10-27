@@ -23,9 +23,11 @@ Nothing here is a compliance claim.**
 
 1. **Mandates.** A person at each company sets what their agent may accept: a price range, a ship-by
    range, how harsh a late penalty may be, and so on.
-2. **Negotiation.** The agents trade offers, each conceding toward its own limit. A rule-based
-   negotiator picks every number; no model output sets a price, limit or key. If the ranges do not
-   overlap, the agents walk away and name the field.
+2. **Negotiation.** The agents talk over [A2A](https://a2a-protocol.org/latest/specification/) (see
+   [How the agents talk](#how-the-agents-talk)). Each sees only its own limits and concedes toward them
+   one round at a time; when the two positions cross they settle on the midpoint. A rule-based negotiator
+   picks every number; no model output sets a price, limit or key. If the ranges do not overlap, the
+   agents walk away.
 3. **Sign-off.** The agreed terms go on-chain as a *proposal*. They become binding only when the
    buyer's person and the supplier's person each approve the same proposal. Agents cannot approve, and
    a proposal swapped after a person reviewed it cannot be approved.
@@ -39,6 +41,33 @@ The rules an agent can compose are a fixed, typed vocabulary (price, order band,
 ship-by, grace period, late-price cut per period and cap, cancel window, deemed-acceptance window).
 See [AGENTS.md](AGENTS.md).
 
+## How the agents talk
+
+The channel is **not trusted**: it carries drafts only. Nothing binds anyone until two people sign on-chain,
+so a compromised channel can slow a negotiation or leak offers, but cannot commit a company to anything.
+
+It uses the open [A2A (Agent2Agent) protocol v1.0.0](https://a2a-protocol.org/latest/specification/) through the
+official [`@a2a-js/sdk`](https://github.com/a2aproject/a2a-js) instead of a custom protocol. Each agent is an A2A
+server; offers are A2A messages carrying a typed data part.
+
+| Layer | What protects it |
+|---|---|
+| Who is this agent? | Each agent has an Ed25519 key. The *deal code* (agent URL, public key, fingerprint) pins the counterparty's key; people confirm the fingerprints out-of-band. An impostor server fails because its Agent Card is not signed by the pinned key. |
+| Every request | A short-lived (60 s) bearer token signed by the pinned key, addressed to this agent, single-use. |
+| Every offer | A separately signed message (JWS via `jose`) bound to one deal, sender, recipient and round, with an expiry and a one-time nonce. Tampering, replay, wrong-deal, out-of-order and expired messages are refused. |
+| Content | Offers are typed terms only: unknown fields, decimals, negatives and out-of-bound values are refused. Free text is logged and never interpreted as an instruction, which blocks prompt injection through the channel. |
+| Agreement | Both sides recompute the same meeting point of the last two offers and require an exact match, so neither can "accept" a self-favouring variant. Each also checks the result against its own limits. |
+| Leaks | Mandates never leave their owner; only offers are sent. Concession patterns still leak over rounds, which is inherent to negotiation. |
+
+Tested with real servers on localhost: `npm test` runs `src/test/channel.test.ts` (11 cases, each checks the refusal
+*reason*). What the channel does **not** give you: a person who rubber-stamps the summary, or a counterparty who is
+simply dishonest (the escrow and the signed rules are for that).
+
+**Limits of this channel:** the demo uses plain HTTP on 127.0.0.1, while the A2A spec requires TLS in production. The
+first exchange of a deal code is the trust root, so a wrong fingerprint accepted by a person defeats it. I did not
+read A2A's security-considerations section (section 13) in full, so this is not a complete review against it.
+The agent-key to on-chain-address link is not cryptographic: the deal code carries both, and people confirm them.
+
 ## What exists today
 
 | Contract | Purpose | State |
@@ -49,11 +78,11 @@ See [AGENTS.md](AGENTS.md).
 | `RelnetPerformanceProof` | Supplier keeps one private `(on_time_count, total_count)` note. `prove_on_time_rate(threshold_pct)` asserts the rate in a private circuit and publishes only the threshold. | Done, 4 tests |
 | `RelnetAuditLog` | Public hash chain of state transitions. | **Stub only** |
 
-Also built: reference negotiating agents (rule-based, free to run), `npm run demo`, `npm run ui`, a
+Also built: negotiating agents (rule-based, free to run) that talk over A2A with signed offers, `npm run demo`, `npm run ui`, a
 simulated funding service, and a 13-case hostile-and-mistaken-agent suite whose assertions check the
 rejection *reason*, not just that something failed.
 
-Not built: audit-log contract, SDK/gateway, FastAPI layer, LLM-driven agents, docker-compose
+Not built: audit-log contract, SDK/gateway, FastAPI layer, LLM-driven agents, TLS for the local channel, docker-compose
 one-command boot, a multi-month simulation, a supplier/part knowledge graph, an MES/ERP adapter,
 a measured fee comparison.
 
@@ -62,7 +91,7 @@ a measured fee comparison.
 ```
   person at buyer        person at supplier      (sign off; hold the buyer / supplier accounts)
         |                      |
-  buyer agent  <-- offers -->  supplier agent    carrier      (propose, order, attest; cannot approve)
+  buyer agent <-- A2A, signed offers --> supplier agent    carrier   (propose, order, attest; cannot approve)
         \                     |                  /
          v                    v                 v
   +--------------------------------------------------------------+
@@ -146,7 +175,7 @@ This is a plan, not something built or validated.
 | Signal | Where relnet stands |
 |---|---|
 | Industrial usefulness | Standing agreements where agents negotiate, people sign, and escrow plus a late-price rule run the deal. Pilot not run. |
-| Robustness | 37 tests pass on the local network, including 13 hostile or mistaken-agent cases with reason checks (plus 5 funding-service unit tests). Not load tested. |
+| Robustness | 48 tests pass: 13 hostile or mistaken-agent cases against the contracts and 11 against the agent channel, each checking the refusal reason (plus 5 funding-service unit tests). Not load tested. |
 | Data sovereignty | Everything runs on the participant's machine. The supplier's performance history stays in a private note; only a threshold is published. Terms and escrow state are public by design. |
 | Measured performance | Latency per operation on one machine. No throughput, cost or fiat-vs-stablecoin comparison yet. |
 | Enterprise readiness | One-command demo and UI, README, typed tests, human sign-off. Not audited; sandbox only. |
@@ -232,6 +261,10 @@ watch the price cut apply. A "try to cheat" panel sends hostile or mistaken requ
 contract's reason for rejecting each, and the supplier can generate the zero-knowledge on-time proof.
 State is in memory and each start is a fresh deployment (deploying takes about 30 seconds).
 
+`npm install` may report about 48 audit advisories. All are in Aztec's own dependency tree (for example `ws`);
+none are in the A2A SDK, Express or `jose`. `npm audit fix --force` would downgrade Aztec to a breaking version, so
+it is not applied.
+
 Restart the sandbox if it has been running for many hours; long-lived instances accumulate
 clock drift and can refuse to restart ("Ethereum node is out of sync") until stray `anvil`
 processes are killed.
@@ -244,7 +277,8 @@ Nargo.toml                                                       workspace
 src/artifacts/                                                   generated TS bindings (gitignored)
 src/lib/terms.ts                                                 term vocabulary, parse/validate/summarize
 src/lib/world.ts                                                 shared deployment (humans + agents)
-src/agents/negotiate.ts                                          mandates, negotiation, proposal review
+src/agents/negotiate.ts                                          mandates, reference negotiation, proposal review
+src/channel/*.ts                                                 A2A channel: identity, signed offers, protocol, server/client
 src/agents/runtime.ts                                            decision log, self-correcting buyer agent
 src/utils/sponsored_fee.ts                                       registers sandbox SponsoredFPC for fees
 src/test/*.test.ts, src/test/e2e/*.e2e.ts                        unit and e2e tests (tsx, node assert style)

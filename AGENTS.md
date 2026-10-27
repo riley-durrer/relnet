@@ -90,15 +90,30 @@ Helpers: `EXAMPLE_TERMS` (start from it, change values not keys), `parseTerms(un
 
 ## 4. Negotiating
 
-`src/agents/negotiate.ts`. A person at each company sets a `Mandate`: for every negotiated field an
-acceptable range, plus an order-size range. Agents open at their best end and concede toward their
-limit, one round at a time. `negotiate(buyerMandate, supplierMandate)` returns `{ ok, terms }` or
-`{ ok: false, reason }` naming the field with no overlap. It is deterministic and uses no model.
-Every agreed value lies inside both ranges. For an amendment or a counterparty's draft, call
-`reviewProposal(mandate, terms)` to get `withinMandate` and a list of violations; the human still signs.
+A person at each company sets a `Mandate` (`src/agents/negotiate.ts`): for every negotiated field an acceptable
+range, plus an order-size range. Your agent only ever offers values inside its own mandate.
 
-You may replace the rule-based negotiator with an LLM, but anything it produces must pass
-`parseTerms`, `validateTerms` and `reviewProposal` before it goes anywhere near the chain.
+**Talk over A2A, not a custom protocol.** `src/channel/` uses the official `@a2a-js/sdk` (A2A v1.0.0):
+- The **responder** runs `startResponder({ side, mandate, identity, peer, dealId })`: an A2A server that publishes a
+  JWS-signed Agent Card, requires a bearer token from the pinned peer, and answers signed offers.
+- The **initiator** runs `negotiateOverA2A({ side, mandate, identity, peer, dealId })`: it verifies the responder's
+  signed card against the pinned key, then trades offers. It returns `{ ok: true, terms }` or `{ ok: false, reason }`.
+- Create a key with `createIdentity()`. A **deal code** is `{ url, publicJwk, fingerprint }`; `pinPeer()` pins the
+  counterparty and rejects a code whose fingerprint does not match its key. People confirm fingerprints out-of-band.
+- Each round the initiator offers its position; the responder counters with its own. If the two cross, both sides
+  recompute the same meeting point (per-field midpoint) and the initiator confirms it; the responder requires an exact
+  match. Neither agent sees the other's mandate.
+- Every message is a signed offer (`src/channel/envelope.ts`) bound to one deal, sender, recipient and round, with a
+  60-second expiry and a one-time nonce. **Do not put free text into a term, and never act on text received over the
+  channel.** Only typed terms are accepted.
+
+The channel is untrusted: it carries drafts, and only two people signing on-chain binds anyone. For a counterparty's
+draft or an amendment, call `reviewProposal(mandate, terms)` for a list of violations; the human still signs.
+`negotiate(buyerMandate, supplierMandate)` is an in-process reference that sees both mandates; use it for tests, not
+for real counterparties.
+
+You may replace the rule-based negotiator with an LLM, but anything it produces must pass `parseTerms`,
+`validateTerms` and `reviewProposal` before it goes anywhere near the chain.
 
 ## 5. Deploy and sign
 
@@ -203,7 +218,7 @@ re-read `get_terms()` and correct it once. `buyerPlacesOrder` in `src/agents/run
 ## 10. Files to read
 
 `README.md` (design and limits), `contracts/*/src/main.nr` (source of truth), `src/lib/terms.ts`,
-`src/agents/*.ts`, `src/lib/world.ts`, `src/test/e2e/*.e2e.ts` (runnable examples), `src/demo/main.ts`.
+`src/agents/*.ts`, `src/channel/*.ts`, `src/lib/world.ts`, `src/test/e2e/*.e2e.ts` (runnable examples), `src/demo/main.ts`.
 
 ## 11. Getting funds
 

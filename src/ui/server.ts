@@ -8,13 +8,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Terms, summarizeTerms } from "../lib/terms.js";
 import { setup, World } from "../lib/world.js";
-import {
-  negotiate,
-  reviewProposal,
-  Mandate,
-  EXAMPLE_BUYER_MANDATE,
-  EXAMPLE_SUPPLIER_MANDATE,
-} from "../agents/negotiate.js";
+import { Mandate, EXAMPLE_BUYER_MANDATE, EXAMPLE_SUPPLIER_MANDATE } from "../agents/negotiate.js";
+import { createIdentity, pinPeer } from "../channel/identity.js";
+import { startResponder, negotiateOverA2A } from "../channel/a2a.js";
+import { withinLimits } from "../channel/protocol.js";
+import { randomUUID } from "node:crypto";
 import { DecisionLog, revertReason, scaleTime } from "../agents/runtime.js";
 
 const PORT = Number(process.env.PORT ?? 8100);
@@ -140,19 +138,32 @@ async function refreshCallOff(c: CallOff) {
 }
 
 async function negotiateNow() {
-  const res = negotiate(mandates.buyer, mandates.supplier);
-  if (!res.ok) {
+  // Two agents, each holding only its own mandate, negotiate over real A2A with signed offers.
+  const buyerKey = await createIdentity();
+  const supplierKey = await createIdentity();
+  const dealId = randomUUID();
+  const onEvent = (e: { who: string; text: string }) => say(`[${e.who}] ${e.text}`);
+  const buyerPin = await pinPeer({ fingerprint: buyerKey.fingerprint, publicJwk: buyerKey.publicJwk, url: "" });
+  const supplierAgent = await startResponder({ side: "supplier", mandate: mandates.supplier, identity: supplierKey, peer: buyerPin, dealId, name: "supplier agent", onEvent });
+  const supplierPin = await pinPeer({ fingerprint: supplierKey.fingerprint, publicJwk: supplierKey.publicJwk, url: supplierAgent.url });
+  let outcome;
+  try {
+    outcome = await negotiateOverA2A({ side: "buyer", mandate: mandates.buyer, identity: buyerKey, peer: supplierPin, dealId, name: "buyer agent", onEvent });
+  } finally {
+    await supplierAgent.close();
+  }
+  if (!outcome.ok) {
     negotiated = null;
-    negotiationNote = `No deal: ${res.reason}`;
+    negotiationNote = `No deal: ${outcome.reason}`;
     say(negotiationNote);
     phase = "setup";
     return;
   }
-  const b = reviewProposal(mandates.buyer, res.terms);
-  const s = reviewProposal(mandates.supplier, res.terms);
-  if (!b.withinMandate || !s.withinMandate) throw new Error("Internal error: negotiated terms fall outside a mandate");
-  negotiated = { terms: res.terms, lines: summarizeTerms(res.terms), rounds: res.rounds };
-  negotiationNote = `Agents agreed after ${res.rounds} rounds. Both agents confirm the terms are inside their mandate.`;
+  if (!withinLimits("buyer", mandates.buyer, outcome.terms) || !withinLimits("supplier", mandates.supplier, outcome.terms)) {
+    throw new Error("Internal error: negotiated terms fall outside a mandate");
+  }
+  negotiated = { terms: outcome.terms, lines: summarizeTerms(outcome.terms), rounds: outcome.rounds };
+  negotiationNote = `Agents agreed at round ${outcome.rounds} over A2A with signed offers. Each saw only its own limits. Agent keys: buyer ${buyerKey.fingerprint.slice(0, 10)}…, supplier ${supplierKey.fingerprint.slice(0, 10)}….`;
   say(negotiationNote);
   phase = "negotiated";
 }

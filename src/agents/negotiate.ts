@@ -19,7 +19,7 @@ export type NegotiatedKey =
   | "cancel_after_secs"
   | "deemed_acceptance_secs";
 
-const NEGOTIATED: { key: NegotiatedKey; buyerPrefers: "low" | "high" }[] = [
+export const NEGOTIATED: { key: NegotiatedKey; buyerPrefers: "low" | "high" }[] = [
   { key: "price_cents", buyerPrefers: "low" },
   { key: "ship_bps", buyerPrefers: "low" }, // buyers pay less up front
   { key: "lead_time_secs", buyerPrefers: "low" }, // buyers want it sooner
@@ -54,14 +54,14 @@ export type NegotiationResult =
   | { ok: true; terms: Terms; rounds: number; transcript: OfferLine[] }
   | { ok: false; reason: string; transcript: OfferLine[] };
 
-const ROUNDS = 8n;
+export const ROUNDS = 8n;
 
 function lerp(best: bigint, worst: bigint, k: bigint): bigint {
   return best + ((worst - best) * k) / ROUNDS;
 }
 
 /** The value an agent offers on a field at round k: best end of its range, conceding toward its limit. */
-function offerFor(range: Range, prefersLow: boolean, k: bigint): bigint {
+export function offerFor(range: Range, prefersLow: boolean, k: bigint): bigint {
   return prefersLow ? lerp(range.min, range.max, k) : lerp(range.max, range.min, k);
 }
 
