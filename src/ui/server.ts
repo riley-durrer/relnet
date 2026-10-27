@@ -1,261 +1,416 @@
 // Local operator UI server: `npm run ui`, then open http://127.0.0.1:8100.
-// Runs on the user's own machine against their own sandbox. Nothing is hosted.
-// Deploys a fresh demo deployment at boot and exposes a small JSON API for the page.
+// Runs on the user's own machine against their own local network. Nothing is hosted.
+// Flow: agents negotiate inside human-set mandates -> proposal on-chain -> both people sign ->
+// agents operate the deal. All state is in memory; every start is a fresh deployment.
 import http from "node:http";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { AztecAddress } from "@aztec/aztec.js/addresses";
-import { createAztecNodeClient } from "@aztec/aztec.js/node";
-import { getInitialTestAccountsData, generateSchnorrAccounts } from "@aztec/accounts/testing";
-import { EmbeddedWallet } from "@aztec/wallets/embedded";
-import { RelnetAgreementContract } from "../artifacts/RelnetAgreement.js";
-import { RelnetCoinContract } from "../artifacts/RelnetCoin.js";
-import { RelnetEscrowContract } from "../artifacts/RelnetEscrow.js";
-import { RelnetPerformanceProofContract } from "../artifacts/RelnetPerformanceProof.js";
-import { getSponsoredFeePaymentMethod } from "../utils/sponsored_fee.js";
+import { Terms, summarizeTerms } from "../lib/terms.js";
+import { setup, World } from "../lib/world.js";
+import {
+  negotiate,
+  reviewProposal,
+  Mandate,
+  EXAMPLE_BUYER_MANDATE,
+  EXAMPLE_SUPPLIER_MANDATE,
+} from "../agents/negotiate.js";
+import { DecisionLog, revertReason, scaleTime } from "../agents/runtime.js";
 
-const NODE_URL = process.env.NODE_URL ?? "http://localhost:8080";
 const PORT = Number(process.env.PORT ?? 8100);
-const SHIP_BY = 4102444800n;
-const PRICE = 500n;
-const VOL_MIN = 10n;
-const VOL_MAX = 100n;
+// The local network advances ~72 chain seconds per block; one demo "day" is one block.
+const DAY_SECS = 72n;
+const DAY = 86400n;
 
 type Stage = "funded" | "shipped" | "received" | "closed";
 interface CallOff {
   id: number;
   qty: number;
-  amountCents: number;
+  valueCents: number;
+  totalCents: number;
   stage: Stage;
   paidCents: number;
+  late: boolean;
   absorbed: boolean;
 }
-interface LogEntry {
-  t: string;
-  text: string;
-}
+type Phase = "setup" | "negotiated" | "proposed" | "active";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
-const callOffs: CallOff[] = [];
-const log: LogEntry[] = [];
+const log = new DecisionLog();
+const activity: { t: string; text: string }[] = [];
+const say = (text: string) => {
+  activity.unshift({ t: new Date().toLocaleTimeString(), text });
+  activity.length = Math.min(activity.length, 60);
+};
+log.onAdd = (d) => say(`[${d.agent}] ${d.action}${d.detail ? ` (${d.result}: ${d.detail})` : ""}`);
+
+let phase: Phase = "setup";
 let busy: string | null = null;
+let world: World | null = null;
+let negotiated: { terms: Terms; lines: string[]; rounds: number } | null = null;
+let negotiationNote = "";
+let signed = { buyer: false, supplier: false };
+const callOffs: CallOff[] = [];
 let nextId = 1;
 let provenThreshold = 0;
+let attackSeq = 1000;
 
-const say = (text: string) => {
-  log.unshift({ t: new Date().toLocaleTimeString(), text });
-  log.length = Math.min(log.length, 50);
+const mandates: { buyer: Mandate; supplier: Mandate } = {
+  buyer: structuredClone(EXAMPLE_BUYER_MANDATE),
+  supplier: structuredClone(EXAMPLE_SUPPLIER_MANDATE),
 };
 
-function reason(e: unknown): string {
-  const m = e instanceof Error ? e.message : String(e);
-  const hit = m.match(/Assertion failed: ([^'\n]+)/);
-  return (hit ? hit[1] : m.split("\n")[0]).slice(0, 200).trim();
+const cents = (c: number | bigint) => `$${(Number(c) / 100).toFixed(2)}`;
+
+/** The three fields a person edits in the UI; everything else keeps the example mandate's values. */
+function applyMandateInput(side: "buyer" | "supplier", input: any) {
+  const m = mandates[side];
+  const int = (v: unknown, name: string) => {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < 0) throw new Error(`${name} must be a non-negative number`);
+    return n;
+  };
+  const priceMin = BigInt(Math.round(int(input.priceMin, "price min") * 100));
+  const priceMax = BigInt(Math.round(int(input.priceMax, "price max") * 100));
+  const shipMin = BigInt(Math.round(int(input.shipDaysMin, "ship-by min") * 86400));
+  const shipMax = BigInt(Math.round(int(input.shipDaysMax, "ship-by max") * 86400));
+  const capMin = BigInt(Math.round(int(input.lateCapMin, "late cap min") * 100));
+  const capMax = BigInt(Math.round(int(input.lateCapMax, "late cap max") * 100));
+  if (priceMin > priceMax || shipMin > shipMax || capMin > capMax) throw new Error("Each minimum must not exceed its maximum");
+  if (priceMin === 0n) throw new Error("Price must be above zero");
+  if (capMax > 10000n) throw new Error("Late cap cannot exceed 100%");
+  m.ranges.price_cents = { min: priceMin, max: priceMax };
+  m.ranges.lead_time_secs = { min: shipMin, max: shipMax };
+  m.ranges.late_cap_bps = { min: capMin, max: capMax };
 }
 
-async function boot() {
-  const wallet = await EmbeddedWallet.create(createAztecNodeClient(NODE_URL), { ephemeral: true });
-  const pm = await getSponsoredFeePaymentMethod(wallet as any);
-  const opts = (from: AztecAddress) => ({ from, fee: { paymentMethod: pm } });
-  const acct = async (d: any) => (await wallet.createSchnorrInitializerlessAccount(d.secret, d.salt, d.signingKey)).address;
-
-  const base = await getInitialTestAccountsData();
-  const buyer = await acct(base[0]);
-  const supplier = await acct(base[1]);
-  const carrier = await acct(base[2]);
-  const [mData, aData] = await generateSchnorrAccounts(2);
-  const mallory = await acct(mData);
-  const arbiter = await acct(aData);
-
-  const { contract: token } = await RelnetCoinContract.deploy(wallet, buyer).send(opts(buyer));
-  const { contract: pp } = await RelnetPerformanceProofContract.deploy(wallet, buyer).send(opts(buyer));
-  const { contract: escrow } = await RelnetEscrowContract.deploy(wallet, token.address, arbiter, pp.address).send(opts(buyer));
-  await pp.methods.set_escrow(escrow.address).send(opts(buyer));
-  const { contract: agreement } = await RelnetAgreementContract.deploy(wallet, buyer, supplier, PRICE, VOL_MIN, VOL_MAX).send(opts(buyer));
-  await token.methods.mint_publicly(buyer, 10_000_000n).send(opts(buyer));
-
-  const bal = async (a: AztecAddress) => Number((await token.methods.balance_of(a).simulate({ from: buyer })).result);
-  const find = (id: number) => callOffs.find((c) => c.id === id);
-
-  async function placeCallOff(qty: number) {
-    const id = nextId++;
-    const amount = BigInt(qty) * PRICE;
-    await agreement.methods.place_call_off(BigInt(qty), PRICE).send(opts(buyer));
-    await token.methods.transfer_public(escrow.address, amount).send(opts(buyer));
-    await escrow.methods.fund_call_off(BigInt(id), supplier, carrier, amount, SHIP_BY).send(opts(buyer));
-    callOffs.push({ id, qty, amountCents: Number(amount), stage: "funded", paidCents: 0, absorbed: false });
-    say(`Call-off #${id} accepted: ${qty} units at ${PRICE} cents, ${amount} cents escrowed.`);
-  }
-
-  async function advance(id: number) {
-    const c = find(id);
-    if (!c) throw new Error("No such call-off");
-    const n = BigInt(id);
-    if (c.stage === "funded") {
-      await escrow.methods.attest_shipped(n).send(opts(supplier));
-      await escrow.methods.attest_shipped(n).send(opts(carrier));
-      c.stage = "shipped";
-      say(`#${id} shipped (supplier and carrier both attested). 30% released.`);
-    } else if (c.stage === "shipped") {
-      await escrow.methods.attest_received(n).send(opts(buyer));
-      await escrow.methods.attest_received(n).send(opts(carrier));
-      c.stage = "received";
-      say(`#${id} received (buyer and carrier both attested). 50% released.`);
-    } else if (c.stage === "received") {
-      await escrow.methods.attest_inspected(n).send(opts(buyer));
-      c.stage = "closed";
-      say(`#${id} inspected by buyer. Remaining 20% released; call-off closed.`);
-    } else {
-      throw new Error("Call-off is closed");
-    }
-    const remaining = Number((await escrow.methods.get_remaining(n).simulate({ from: buyer })).result);
-    c.paidCents = c.amountCents - remaining;
-  }
-
-  async function prove(threshold: number) {
-    await token.methods.transfer_public(buyer, 0n).send(opts(buyer)); // let recorded outcomes settle
-    for (const c of callOffs) {
-      if (c.stage !== "funded" && !c.absorbed) {
-        await pp.methods.absorb_outcome(BigInt(c.id), true).send(opts(supplier));
-        c.absorbed = true;
-      }
-    }
-    try {
-      await pp.methods.prove_on_time_rate(BigInt(threshold)).send(opts(supplier));
-    } catch (e) {
-      say(`Proof of >= ${threshold}% on time FAILED: ${reason(e)}`);
-      return { ok: false, reason: reason(e) };
-    }
-    provenThreshold = Number((await pp.methods.get_proven_threshold(supplier).simulate({ from: buyer })).result);
-    say(`Supplier proved >= ${provenThreshold}% on time. Counts and dates stay private.`);
-    return { ok: true };
-  }
-
-  const attacks: Record<string, { label: string; run: () => Promise<unknown> }> = {
-    qty: { label: "Order 9999 units (outside the 10-100 band)", run: () => agreement.methods.place_call_off(9999n, PRICE).send(opts(supplier)) },
-    price: { label: "Order at 1 cent (not the agreed 500)", run: () => agreement.methods.place_call_off(50n, 1n).send(opts(supplier)) },
-    stranger: { label: "A stranger places an order", run: () => agreement.methods.place_call_off(50n, PRICE).send(opts(mallory)) },
-    mint: { label: "A stranger mints tokens", run: () => token.methods.mint_publicly(mallory, 1_000_000n).send(opts(mallory)) },
-    forge: { label: "Forge an on-time delivery record", run: () => pp.methods.record_outcome(999n, true).send(opts(mallory)) },
-    unfunded: { label: "Open a call-off with no money sent", run: () => escrow.methods.fund_call_off(9000n, supplier, carrier, 5000n, SHIP_BY).send(opts(buyer)) },
-    arbiter: { label: "A stranger acts as arbiter", run: () => escrow.methods.arbiter_resolve(9001n, mallory, 100n).send(opts(mallory)) },
-    reuse: {
-      label: "Re-use a closed call-off",
-      run: async () => {
-        const closed = callOffs.find((c) => c.stage === "closed");
-        if (!closed) throw new Error("Finish a call-off first, then try this attack");
-        return escrow.methods.attest_shipped(BigInt(closed.id)).send(opts(mallory));
-      },
-    },
+function mandateView(m: Mandate) {
+  return {
+    company: m.company,
+    priceMin: Number(m.ranges.price_cents.min) / 100,
+    priceMax: Number(m.ranges.price_cents.max) / 100,
+    shipDaysMin: Number(m.ranges.lead_time_secs.min / DAY),
+    shipDaysMax: Number(m.ranges.lead_time_secs.max / DAY),
+    lateCapMin: Number(m.ranges.late_cap_bps.min) / 100,
+    lateCapMax: Number(m.ranges.late_cap_bps.max) / 100,
   };
+}
 
-  async function state() {
-    return {
-      terms: { priceCents: Number(PRICE), volumeMin: Number(VOL_MIN), volumeMax: Number(VOL_MAX) },
-      callOffs,
-      balances: { buyer: await bal(buyer), supplier: await bal(supplier), escrow: await bal(escrow.address) },
-      provenThreshold,
-      attacks: Object.entries(attacks).map(([key, a]) => ({ key, label: a.label })),
-      busy,
-      log,
+async function state() {
+  const w = world;
+  let version = 0;
+  let chainTime = 0;
+  let balances = { buyer: 0, supplier: 0, escrow: 0 };
+  if (w) {
+    version = Number((await w.agreement.methods.get_version().simulate({ from: w.buyer })).result);
+    chainTime = Number(await w.chainNow());
+    balances = {
+      buyer: Number(await w.bal(w.buyer)) + Number(await w.bal(w.buyerAgent)),
+      supplier: Number(await w.bal(w.supplier)),
+      escrow: Number(await w.bal(w.escrow.address)),
     };
   }
-
-  say("Deployment ready. All entities are fictional; this is a local test network.");
-
-  async function exclusive<T>(label: string, fn: () => Promise<T>): Promise<T> {
-    if (busy) throw Object.assign(new Error(`Busy: ${busy}`), { status: 409 });
-    busy = label;
-    try {
-      return await fn();
-    } finally {
-      busy = null;
-    }
-  }
-
-  const json = (res: http.ServerResponse, code: number, body: unknown) => {
-    res.writeHead(code, { "content-type": "application/json" });
-    res.end(JSON.stringify(body));
+  return {
+    phase,
+    busy,
+    mandates: { buyer: mandateView(mandates.buyer), supplier: mandateView(mandates.supplier) },
+    negotiation: negotiated ? { lines: negotiated.lines, rounds: negotiated.rounds } : null,
+    negotiationNote,
+    signed,
+    agreementVersion: version,
+    chainTime,
+    dayLength: Number(DAY_SECS),
+    callOffs,
+    balances,
+    provenThreshold,
+    attacks: attackDefs().map((a) => ({ key: a.key, label: a.label })),
+    log: activity,
   };
-  const readBody = (req: http.IncomingMessage) =>
-    new Promise<any>((resolve, reject) => {
-      let s = "";
-      req.on("data", (d) => {
-        s += d;
-        if (s.length > 10_000) reject(new Error("Body too large"));
-      });
-      req.on("end", () => {
-        try {
-          resolve(s ? JSON.parse(s) : {});
-        } catch {
-          reject(new Error("Invalid JSON"));
-        }
-      });
-    });
-
-  const server = http.createServer(async (req, res) => {
-    try {
-      if (req.method === "GET" && (req.url === "/" || req.url === "/index.html")) {
-        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-        res.end(await readFile(path.join(dir, "public", "index.html")));
-        return;
-      }
-      if (req.method === "GET" && req.url === "/api/state") return json(res, 200, await state());
-      if (req.method !== "POST") return json(res, 404, { error: "Not found" });
-      const body = await readBody(req);
-
-      if (req.url === "/api/call-off") {
-        const qty = Number(body.qty);
-        if (!Number.isInteger(qty) || qty <= 0) return json(res, 400, { error: "qty must be a positive integer" });
-        // Out-of-band quantities are sent on purpose: the contract, not this server, rejects them.
-        try {
-          await exclusive("Placing call-off on-chain", () => placeCallOff(qty));
-          return json(res, 200, { ok: true });
-        } catch (e: any) {
-          if (e.status === 409) throw e;
-          say(`Call-off of ${qty} units REJECTED by the contract: ${reason(e)}`);
-          return json(res, 200, { ok: false, reason: reason(e) });
-        }
-      }
-      if (req.url === "/api/advance") {
-        const id = Number(body.id);
-        await exclusive("Settling milestone on-chain", () => advance(id));
-        return json(res, 200, { ok: true });
-      }
-      if (req.url === "/api/prove") {
-        const t = Number(body.threshold);
-        if (!Number.isInteger(t) || t < 0 || t > 100) return json(res, 400, { error: "threshold must be 0-100" });
-        return json(res, 200, await exclusive("Generating zero-knowledge proof", () => prove(t)));
-      }
-      if (req.url === "/api/attack") {
-        const a = attacks[String(body.key)];
-        if (!a) return json(res, 400, { error: "Unknown attack" });
-        return json(
-          res,
-          200,
-          await exclusive("Running attack", async () => {
-            try {
-              await a.run();
-              say(`ATTACK SUCCEEDED (unexpected): ${a.label}`);
-              return { blocked: false, reason: "" };
-            } catch (e) {
-              say(`Attack blocked: ${a.label}. Reason: ${reason(e)}`);
-              return { blocked: true, reason: reason(e) };
-            }
-          }),
-        );
-      }
-      return json(res, 404, { error: "Not found" });
-    } catch (e: any) {
-      json(res, e.status ?? 500, { error: reason(e) });
-    }
-  });
-  server.listen(PORT, "127.0.0.1", () => console.log(`relnet operator UI: http://127.0.0.1:${PORT}`));
 }
 
-console.log("Deploying contracts to the local network (about 30 seconds)...");
-boot().catch((e) => {
-  console.error(e);
-  process.exit(1);
+async function refreshCallOff(c: CallOff) {
+  const w = world!;
+  const id = BigInt(c.id);
+  const remaining = Number((await w.escrow.methods.get_remaining(id).simulate({ from: w.buyer })).result);
+  c.totalCents = Number((await w.escrow.methods.get_total(id).simulate({ from: w.buyer })).result);
+  c.paidCents = c.totalCents - remaining;
+  c.late = c.totalCents < c.valueCents;
+}
+
+async function negotiateNow() {
+  const res = negotiate(mandates.buyer, mandates.supplier);
+  if (!res.ok) {
+    negotiated = null;
+    negotiationNote = `No deal: ${res.reason}`;
+    say(negotiationNote);
+    phase = "setup";
+    return;
+  }
+  const b = reviewProposal(mandates.buyer, res.terms);
+  const s = reviewProposal(mandates.supplier, res.terms);
+  if (!b.withinMandate || !s.withinMandate) throw new Error("Internal error: negotiated terms fall outside a mandate");
+  negotiated = { terms: res.terms, lines: summarizeTerms(res.terms), rounds: res.rounds };
+  negotiationNote = `Agents agreed after ${res.rounds} rounds. Both agents confirm the terms are inside their mandate.`;
+  say(negotiationNote);
+  phase = "negotiated";
+}
+
+async function proposeOnChain() {
+  if (!negotiated) throw new Error("Negotiate first");
+  const onChain = scaleTime(negotiated.terms, DAY_SECS);
+  world = await setup(onChain, false);
+  callOffs.length = 0;
+  nextId = 1;
+  provenThreshold = 0;
+  signed = { buyer: false, supplier: false };
+  phase = "proposed";
+  say("Terms are on-chain as a proposal. Nothing is binding until both people sign.");
+}
+
+async function sign(who: "buyer" | "supplier") {
+  const w = world!;
+  const id = await w.proposalId();
+  await w.agreement.methods.approve_terms(id).send(w.o(who === "buyer" ? w.buyer : w.supplier));
+  signed[who] = true;
+  const v = Number((await w.agreement.methods.get_version().simulate({ from: w.buyer })).result);
+  say(`${who === "buyer" ? mandates.buyer.company : mandates.supplier.company}'s person signed.`);
+  if (v > 0) {
+    phase = "active";
+    say("Both people signed. The agreement is active and agents may place orders.");
+  }
+}
+
+async function placeCallOff(qty: number) {
+  const w = world!;
+  const price = w.terms.price_cents;
+  const id = nextId;
+  try {
+    await w.agreement.methods.place_call_off(BigInt(id), BigInt(qty), price).send(w.o(w.buyerAgent));
+  } catch (e) {
+    say(`Order of ${qty} units REJECTED by the contract: ${revertReason(e)}`);
+    return { ok: false, reason: revertReason(e) };
+  }
+  nextId++;
+  const value = BigInt(qty) * price;
+  await w.token.methods.transfer_public(w.escrow.address, value).send(w.o(w.buyerAgent));
+  await w.escrow.methods.fund_call_off(BigInt(id), w.carrier).send(w.o(w.buyerAgent));
+  callOffs.push({ id, qty, valueCents: Number(value), totalCents: Number(value), stage: "funded", paidCents: 0, late: false, absorbed: false });
+  say(`Order #${id} accepted: ${qty} units, ${cents(value)} escrowed.`);
+  return { ok: true };
+}
+
+async function advance(id: number) {
+  const w = world!;
+  const c = callOffs.find((x) => x.id === id);
+  if (!c) throw new Error("No such order");
+  const n = BigInt(id);
+  if (c.stage === "funded") {
+    await w.ship(n);
+    c.stage = "shipped";
+    await refreshCallOff(c);
+    say(c.late ? `#${id} shipped LATE. The signed rule cut the price by ${cents(c.valueCents - c.totalCents)}; the buyer was refunded.` : `#${id} shipped on time.`);
+  } else if (c.stage === "shipped") {
+    await w.receive(n);
+    c.stage = "received";
+    await refreshCallOff(c);
+    say(`#${id} received.`);
+  } else if (c.stage === "received") {
+    await w.escrow.methods.attest_inspected(n).send(w.o(w.buyerAgent));
+    c.stage = "closed";
+    await refreshCallOff(c);
+    say(`#${id} inspected. Supplier paid ${cents(c.paidCents)} in total.`);
+  } else {
+    throw new Error("Order is closed");
+  }
+}
+
+async function prove(threshold: number) {
+  const w = world!;
+  await w.tick();
+  for (const c of callOffs) {
+    if (c.stage !== "funded" && !c.absorbed) {
+      await w.pp.methods.absorb_outcome(BigInt(c.id), !c.late).send(w.o(w.supplier));
+      c.absorbed = true;
+    }
+  }
+  try {
+    await w.pp.methods.prove_on_time_rate(BigInt(threshold)).send(w.o(w.supplier));
+  } catch (e) {
+    say(`Proof of at least ${threshold}% on time FAILED: ${revertReason(e)}`);
+    return { ok: false, reason: revertReason(e) };
+  }
+  provenThreshold = Number((await w.pp.methods.get_proven_threshold(w.supplier).simulate({ from: w.buyer })).result);
+  say(`Supplier proved at least ${provenThreshold}% on time. Counts and dates stay private.`);
+  return { ok: true };
+}
+
+function attackDefs(): { key: string; label: string; run: () => Promise<unknown> }[] {
+  const w = world;
+  const fail = async () => {
+    throw new Error("Sign the agreement first");
+  };
+  if (!w || phase !== "active") {
+    return ["qty", "price", "stranger", "approve", "mint", "forge", "stale"].map((key) => ({ key, label: attackLabels[key], run: fail }));
+  }
+  const price = w.terms.price_cents;
+  const id = () => BigInt(++attackSeq);
+  return [
+    { key: "qty", label: attackLabels.qty, run: () => w.agreement.methods.place_call_off(id(), 9999n, price).send(w.o(w.supplierAgent)) },
+    { key: "price", label: attackLabels.price, run: () => w.agreement.methods.place_call_off(id(), 50n, 1n).send(w.o(w.supplierAgent)) },
+    { key: "stranger", label: attackLabels.stranger, run: () => w.agreement.methods.place_call_off(id(), 50n, price).send(w.o(w.outsider)) },
+    {
+      key: "approve",
+      label: attackLabels.approve,
+      run: async () => {
+        // Open a proposal so the only thing standing in the way is the rule that agents cannot approve.
+        const t = (await w.agreement.methods.get_terms().simulate({ from: w.buyer })).result as Terms;
+        await w.agreement.methods.propose_terms(t).send(w.o(w.buyerAgent));
+        await w.agreement.methods.approve_terms(await w.proposalId()).send(w.o(w.buyerAgent));
+      },
+    },
+    { key: "mint", label: attackLabels.mint, run: () => w.token.methods.mint_publicly(w.outsider, 1_000_000n).send(w.o(w.outsider)) },
+    { key: "forge", label: attackLabels.forge, run: () => w.pp.methods.record_outcome(999n, true).send(w.o(w.supplierAgent)) },
+    {
+      key: "stale",
+      label: attackLabels.stale,
+      run: async () => {
+        // An agent reviewed proposal N, then someone swaps the terms under the person.
+        const t = (await w.agreement.methods.get_terms().simulate({ from: w.buyer })).result as Terms;
+        await w.agreement.methods.propose_terms({ ...t, price_cents: 700n }).send(w.o(w.buyerAgent));
+        const reviewed = await w.proposalId();
+        await w.agreement.methods.propose_terms({ ...t, price_cents: 1n }).send(w.o(w.supplierAgent));
+        try {
+          await w.agreement.methods.approve_terms(reviewed).send(w.o(w.buyer));
+        } finally {
+          // Restore the signed terms as an open proposal; the active terms were never touched.
+          await w.agreement.methods.propose_terms(t).send(w.o(w.buyerAgent));
+        }
+      },
+    },
+  ];
+}
+const attackLabels: Record<string, string> = {
+  qty: "Order 9999 units (outside the signed band)",
+  price: "Order at 1 cent (not the signed price)",
+  stranger: "A stranger places an order",
+  approve: "An agent tries to approve terms by itself",
+  mint: "A stranger mints tokens",
+  forge: "Forge an on-time delivery record",
+  stale: "Swap the terms after a person reviewed them",
+};
+
+async function exclusive<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  if (busy) throw Object.assign(new Error(`Busy: ${busy}`), { status: 409 });
+  busy = label;
+  try {
+    return await fn();
+  } finally {
+    busy = null;
+  }
+}
+
+const json = (res: http.ServerResponse, code: number, body: unknown) => {
+  res.writeHead(code, { "content-type": "application/json" });
+  res.end(JSON.stringify(body));
+};
+const readBody = (req: http.IncomingMessage) =>
+  new Promise<any>((resolve, reject) => {
+    let s = "";
+    req.on("data", (d) => {
+      s += d;
+      if (s.length > 10_000) reject(new Error("Body too large"));
+    });
+    req.on("end", () => {
+      try {
+        resolve(s ? JSON.parse(s) : {});
+      } catch {
+        reject(new Error("Invalid JSON"));
+      }
+    });
+  });
+const need = (p: Phase[]) => {
+  if (!p.includes(phase)) throw Object.assign(new Error(`Not available during "${phase}"`), { status: 409 });
+};
+
+const server = http.createServer(async (req, res) => {
+  try {
+    if (req.method === "GET" && (req.url === "/" || req.url === "/index.html")) {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(await readFile(path.join(dir, "public", "index.html")));
+      return;
+    }
+    if (req.method === "GET" && req.url === "/api/state") return json(res, 200, await state());
+    if (req.method !== "POST") return json(res, 404, { error: "Not found" });
+    const body = await readBody(req);
+
+    if (req.url === "/api/negotiate") {
+      need(["setup", "negotiated"]);
+      applyMandateInput("buyer", body.buyer ?? {});
+      applyMandateInput("supplier", body.supplier ?? {});
+      await exclusive("Agents negotiating", negotiateNow);
+      return json(res, 200, { ok: negotiated !== null, note: negotiationNote });
+    }
+    if (req.url === "/api/propose") {
+      need(["negotiated"]);
+      await exclusive("Putting the proposal on-chain", proposeOnChain);
+      return json(res, 200, { ok: true });
+    }
+    if (req.url === "/api/sign") {
+      need(["proposed"]);
+      if (body.who !== "buyer" && body.who !== "supplier") return json(res, 400, { error: "who must be buyer or supplier" });
+      await exclusive("Recording signature on-chain", () => sign(body.who));
+      return json(res, 200, { ok: true });
+    }
+    if (req.url === "/api/call-off") {
+      need(["active"]);
+      const qty = Number(body.qty);
+      if (!Number.isInteger(qty) || qty <= 0) return json(res, 400, { error: "qty must be a positive integer" });
+      return json(res, 200, await exclusive("Placing order on-chain", () => placeCallOff(qty)));
+    }
+    if (req.url === "/api/advance") {
+      need(["active"]);
+      await exclusive("Settling on-chain", () => advance(Number(body.id)));
+      return json(res, 200, { ok: true });
+    }
+    if (req.url === "/api/days") {
+      need(["active"]);
+      const n = Number(body.days);
+      if (!Number.isInteger(n) || n < 1 || n > 30) return json(res, 400, { error: "days must be 1 to 30" });
+      await exclusive("Advancing the demo clock", async () => {
+        for (let i = 0; i < n; i++) await world!.tick();
+        say(`Demo clock advanced ${n} day${n === 1 ? "" : "s"}.`);
+      });
+      return json(res, 200, { ok: true });
+    }
+    if (req.url === "/api/prove") {
+      need(["active"]);
+      const t = Number(body.threshold);
+      if (!Number.isInteger(t) || t < 0 || t > 100) return json(res, 400, { error: "threshold must be 0-100" });
+      return json(res, 200, await exclusive("Generating zero-knowledge proof", () => prove(t)));
+    }
+    if (req.url === "/api/attack") {
+      need(["proposed", "active"]);
+      const a = attackDefs().find((x) => x.key === body.key);
+      if (!a) return json(res, 400, { error: "Unknown attack" });
+      return json(
+        res,
+        200,
+        await exclusive("Running attack", async () => {
+          try {
+            await a.run();
+            say(`ATTACK SUCCEEDED (unexpected): ${a.label}`);
+            return { blocked: false, reason: "" };
+          } catch (e) {
+            say(`Attack blocked: ${a.label}. Reason: ${revertReason(e)}`);
+            return { blocked: true, reason: revertReason(e) };
+          }
+        }),
+      );
+    }
+    return json(res, 404, { error: "Not found" });
+  } catch (e: any) {
+    json(res, e.status ?? 500, { error: revertReason(e) });
+  }
 });
+server.listen(PORT, "127.0.0.1", () => console.log(`relnet operator UI: http://127.0.0.1:${PORT}`));
+say("Ready. Set each company's mandate, then let the agents negotiate. Fictional entities, local test network.");

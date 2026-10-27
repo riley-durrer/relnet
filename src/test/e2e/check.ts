@@ -36,3 +36,15 @@ export function finish(results: boolean[]): void {
     process.exit(1);
   }
 }
+
+/** Like assertRejects, but the rejection must come from the expected rule, not an incidental one. */
+export async function assertRejectsWith(p: Promise<unknown>, substring: string, message: string): Promise<void> {
+  try {
+    await p;
+  } catch (e) {
+    const m = e instanceof Error ? e.message : String(e);
+    if (m.includes(substring)) return;
+    throw new Error(`${message}: rejected for the wrong reason (expected "${substring}")`);
+  }
+  throw new Error(message);
+}

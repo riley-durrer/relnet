@@ -141,7 +141,14 @@ async function main() {
     ["Order 9999 units (outside the signed band)", () => w.agreement.methods.place_call_off(91n, 9999n, price).send(w.o(w.supplierAgent))],
     ["Order at 1 cent (not the signed price)", () => w.agreement.methods.place_call_off(92n, 50n, 1n).send(w.o(w.supplierAgent))],
     ["A stranger places an order", () => w.agreement.methods.place_call_off(93n, 50n, price).send(w.o(w.outsider))],
-    ["An agent approves terms on its own", async () => w.agreement.methods.approve_terms(await w.proposalId()).send(w.o(w.buyerAgent))],
+    [
+      "An agent approves terms on its own",
+      async () => {
+        const t = (await w.agreement.methods.get_terms().simulate({ from: w.buyer })).result as Terms;
+        await w.agreement.methods.propose_terms(t).send(w.o(w.buyerAgent)); // open proposal to attack
+        await w.agreement.methods.approve_terms(await w.proposalId()).send(w.o(w.buyerAgent));
+      },
+    ],
     ["A stranger mints tokens", () => w.token.methods.mint_publicly(w.outsider, 1_000_000n).send(w.o(w.outsider))],
     ["Forge an on-time delivery record", () => w.pp.methods.record_outcome(999n, true).send(w.o(w.supplierAgent))],
     ["Open escrow with no money sent", () => w.escrow.methods.fund_call_off(90n, w.carrier).send(w.o(w.buyerAgent))],

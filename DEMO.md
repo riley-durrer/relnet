@@ -1,32 +1,43 @@
-# Demo video script (about 3 minutes)
+# Demo video script (about 3.5 minutes)
 
-Record the terminal at a large font. Run `npm run sandbox` in one pane first and wait for it to
-settle (about 2 minutes). Run `npm run demo` in the other pane. The full run takes roughly 90 seconds,
-so record it once and speak over it, or trim in editing.
+Record the terminal at a large font and at least 100 columns wide. Start the local network with
+`npm run sandbox` and wait for it to settle (about 2 minutes). Run `npm run demo` in a second pane.
+A full run takes roughly 3 minutes. Record it once and talk over it, or trim in editing. If you also
+show the operator page (`npm run ui`), record that separately.
 
-All entities are fictional. Testnet only. No real funds.
+All entities are fictional. Local test network only. No real funds.
 
 ## Shot list
 
 | Time | On screen | Say |
 |---|---|---|
-| 0:00 | README title and the one-line pitch | "Suppliers and buyers sign multi-year agreements, then let software agents run the daily orders. relnet makes the agreement itself enforceable, so the agents don't have to be trusted." |
-| 0:20 | `npm run demo`, step 1 | "Everything runs on a local Aztec network on this laptop. There is no server we host. Price is 500 cents a unit, volume band 10 to 100. Those terms live in the contract." |
-| 0:45 | Step 2, call-offs paying out | "Three orders, each escrowed. Payment releases in three milestones: 30% on shipment, 50% on receipt, 20% on inspection. The totals match to the cent. Money is integer cents throughout." |
-| 1:20 | Step 3, ZK proof | "Here is the part that needs zero-knowledge. The supplier proves they deliver on time at least 95% of the time. The buyer sees the claim and that it is true. They never see the order history, dates or quantities." |
-| 1:50 | Step 4, attack table | "Now the agents are hostile. Wrong price, wrong volume, forged delivery records, someone minting money, someone releasing escrow early. The baseline here is a ledger that trusts its agents, and it accepts all of them. relnet rejected 11 of 11. No language model was involved in any of those decisions." |
-| 2:30 | Step 5, measured line | "About 3.7 seconds a transaction on this laptop. That's one run on a sandbox, not a benchmark." |
-| 2:45 | README "Known limits" | "We list what's not done: milestone attestations are plain signed calls, terms are public, and it's sandbox only." |
-| 3:00 | End card | "relnet: agreements that enforce themselves." |
+| 0:00 | README title and first paragraph | "Companies sign long-term supply deals, then someone has to run them: orders, shipments, late deliveries, payment. relnet lets AI agents make and run the deal, with a person at each company signing it, and a contract enforcing it, so payment doesn't have to go through a bank." |
+| 0:25 | Demo step 1 (mandates, negotiation) | "Each company's person sets limits: a price range, how fast to ship, how harsh a late penalty can be. The agents negotiate inside those limits. A rule-based negotiator picks every number. No model sets a price." |
+| 0:55 | Step 2 (terms in plain English) | "This is what the person reads before signing. Code wrote it from the exact values, so what they read is what they sign." |
+| 1:15 | Steps 3 and 4 (order rejected, agent can't approve, people sign) | "Before anyone signs, the buyer's agent tries to order. Rejected. The supplier's agent tries to approve the terms itself. Rejected. Only the two people can sign. Now it's active." |
+| 1:50 | Step 5 (three orders) | "Agents run the deal. The buyer's agent mistypes 400 units instead of 40. The contract rejects it, and the agent re-reads the signed terms and corrects itself. Order two ships late. The escrow cuts the price by the rule both sides signed and refunds the buyer. Nobody chose that number at the time." |
+| 2:25 | Step 5 table | "Two orders paid in full, the late one paid less. The amounts come from the signed terms." |
+| 2:40 | Step 6 (zero-knowledge proof) | "The supplier proves its on-time rate without revealing orders. It can't prove 95%, because one of three was late. It can prove 60%." |
+| 3:00 | Step 7 (attack table) | "Then agents misbehave on purpose: wrong price, a stranger ordering, an agent approving on its own, forged delivery records. The baseline is a ledger that trusts its agents, and it accepts all of them. relnet blocks every one." |
+| 3:20 | README "Known limits" | "What's not done: milestone confirmations are plain calls, a signature isn't an identity check, no fee savings are measured, and it runs on a local network." |
+| 3:30 | End card | "relnet: agents make the deal, people sign it, contracts enforce it." |
+
+## Optional UI segment (about 60 seconds)
+
+Run `npm run ui` and open http://127.0.0.1:8100. Set limits, click "Let the agents negotiate", read the
+terms, "Send the proposal on-chain" (about 30 seconds), sign as both people, place an order, click
+"Advance 1 day" about 20 times, ship it late, and point at the price cut. Each action takes about 4
+seconds; narrate during the wait.
 
 ## Before recording
 
-- Fresh sandbox (restart it if it has run for hours).
-- Terminal at least 100 columns wide so the attack table doesn't wrap.
-- Close anything showing personal data. The demo prints no keys.
+- Fresh network (restart it if it has run for hours).
+- Terminal at least 100 columns wide so the tables don't wrap.
+- Close anything that shows personal data. The demo prints no keys.
 
 ## Claims to avoid
 
-- Do not say "compliant", "audited" or "production ready".
+- Do not say "compliant", "audited", "production ready" or "saves money on fees". No fee saving is measured.
 - Do not call the latency a benchmark.
-- The baseline column is a model of a trusting ledger, not a measured competitor. Say so if asked.
+- The baseline column models a ledger that trusts its agents. It is not a measured competitor.
+- The demo compresses time: one day is 72 chain seconds (one block). Say so.

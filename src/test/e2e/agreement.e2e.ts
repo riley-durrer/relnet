@@ -1,4 +1,4 @@
-import { check, assertRejects, assertEqual, finish } from "./check.js";
+import { check, assertRejects, assertRejectsWith, assertEqual, finish } from "./check.js";
 import { setup } from "./harness.js";
 
 async function main() {
@@ -10,22 +10,26 @@ async function main() {
 
   results.push(
     await check("no call-off is possible until both humans approve the terms", async () => {
-      await assertRejects(agreement.methods.place_call_off(1n, 50n, 500n).send(o(buyerAgent)), "placed before approval");
+      await assertRejectsWith(agreement.methods.place_call_off(1n, 50n, 500n).send(o(buyerAgent)), "not yet approved", "placed before approval");
       const id = await w.proposalId();
       await agreement.methods.approve_terms(id).send(o(buyer));
       assertEqual(await version(), 0n, "terms active after only the buyer approved");
-      await assertRejects(agreement.methods.place_call_off(1n, 50n, 500n).send(o(buyerAgent)), "placed after one approval");
+      await assertRejectsWith(agreement.methods.place_call_off(1n, 50n, 500n).send(o(buyerAgent)), "not yet approved", "placed after one approval");
       await agreement.methods.approve_terms(id).send(o(supplier));
       assertEqual(await version(), 1n, "terms active after both approved");
     }),
   );
 
   results.push(
-    await check("agents and outsiders cannot approve terms", async () => {
+    await check("agents and outsiders cannot approve an open proposal", async () => {
+      await agreement.methods.propose_terms(w.terms).send(o(buyerAgent)); // opens a fresh proposal
       const id = await w.proposalId();
-      await assertRejects(agreement.methods.approve_terms(id).send(o(buyerAgent)), "buyer agent approved");
-      await assertRejects(agreement.methods.approve_terms(id).send(o(supplierAgent)), "supplier agent approved");
-      await assertRejects(agreement.methods.approve_terms(id).send(o(outsider)), "outsider approved");
+      const why = "Only the buyer or supplier may approve";
+      await assertRejectsWith(agreement.methods.approve_terms(id).send(o(buyerAgent)), why, "buyer agent approved");
+      await assertRejectsWith(agreement.methods.approve_terms(id).send(o(supplierAgent)), why, "supplier agent approved");
+      await assertRejectsWith(agreement.methods.approve_terms(id).send(o(outsider)), why, "outsider approved");
+      assertEqual((await agreement.methods.get_buyer_approved().simulate({ from: buyer })).result, false, "buyer flag untouched");
+      assertEqual((await agreement.methods.get_supplier_approved().simulate({ from: buyer })).result, false, "supplier flag untouched");
     }),
   );
 
@@ -40,11 +44,11 @@ async function main() {
 
   results.push(
     await check("rejects out-of-band quantity, wrong price, outsiders and reused ids", async () => {
-      await assertRejects(agreement.methods.place_call_off(10n, 9999n, 500n).send(o(buyerAgent)), "out-of-band qty");
-      await assertRejects(agreement.methods.place_call_off(10n, 9n, 500n).send(o(buyerAgent)), "below minimum");
-      await assertRejects(agreement.methods.place_call_off(10n, 50n, 1n).send(o(buyerAgent)), "wrong price");
-      await assertRejects(agreement.methods.place_call_off(10n, 50n, 500n).send(o(outsider)), "outsider");
-      await assertRejects(agreement.methods.place_call_off(1n, 50n, 500n).send(o(buyerAgent)), "reused id");
+      await assertRejectsWith(agreement.methods.place_call_off(10n, 9999n, 500n).send(o(buyerAgent)), "outside agreed band", "out-of-band qty");
+      await assertRejectsWith(agreement.methods.place_call_off(10n, 9n, 500n).send(o(buyerAgent)), "outside agreed band", "below minimum");
+      await assertRejectsWith(agreement.methods.place_call_off(10n, 50n, 1n).send(o(buyerAgent)), "does not match agreement price", "wrong price");
+      await assertRejectsWith(agreement.methods.place_call_off(10n, 50n, 500n).send(o(outsider)), "Only buyer or supplier", "outsider");
+      await assertRejectsWith(agreement.methods.place_call_off(1n, 50n, 500n).send(o(buyerAgent)), "already used", "reused id");
     }),
   );
 
@@ -68,20 +72,17 @@ async function main() {
       await agreement.methods.propose_terms({ ...w.terms, price_cents: 700n }).send(o(buyerAgent));
       const reviewed = await w.proposalId();
       await agreement.methods.propose_terms({ ...w.terms, price_cents: 1n }).send(o(buyerAgent)); // swapped under the human
-      await assertRejects(agreement.methods.approve_terms(reviewed).send(o(buyer)), "approved a stale proposal id");
+      await assertRejectsWith(agreement.methods.approve_terms(reviewed).send(o(buyer)), "not the current proposal", "approved a stale proposal id");
     }),
   );
 
   results.push(
     await check("the contract rejects terms that break its own bounds", async () => {
-      await assertRejects(
-        agreement.methods.propose_terms({ ...w.terms, ship_bps: 6000n, receive_bps: 5000n }).send(o(buyerAgent)),
-        "shares over 100%",
-      );
-      await assertRejects(agreement.methods.propose_terms({ ...w.terms, volume_min: 200n }).send(o(buyerAgent)), "inverted band");
-      await assertRejects(agreement.methods.propose_terms({ ...w.terms, price_cents: 0n }).send(o(buyerAgent)), "zero price");
-      await assertRejects(agreement.methods.propose_terms({ ...w.terms, late_cap_bps: 10001n }).send(o(buyerAgent)), "cap over 100%");
-      await assertRejects(agreement.methods.propose_terms(w.terms).send(o(outsider)), "outsider proposal");
+      await assertRejectsWith(agreement.methods.propose_terms({ ...w.terms, ship_bps: 6000n, receive_bps: 5000n }).send(o(buyerAgent)), "exceed 100%", "shares over 100%");
+      await assertRejectsWith(agreement.methods.propose_terms({ ...w.terms, volume_min: 200n }).send(o(buyerAgent)), "inverted", "inverted band");
+      await assertRejectsWith(agreement.methods.propose_terms({ ...w.terms, price_cents: 0n }).send(o(buyerAgent)), "Price must be positive", "zero price");
+      await assertRejectsWith(agreement.methods.propose_terms({ ...w.terms, late_cap_bps: 10001n }).send(o(buyerAgent)), "cap exceeds 100%", "cap over 100%");
+      await assertRejectsWith(agreement.methods.propose_terms(w.terms).send(o(outsider)), "Only a party or its agent", "outsider proposal");
     }),
   );
 
