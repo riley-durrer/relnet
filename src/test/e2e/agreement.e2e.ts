@@ -1,86 +1,87 @@
-import { AztecAddress } from "@aztec/aztec.js/addresses";
-import { createAztecNodeClient } from "@aztec/aztec.js/node";
-import { getInitialTestAccountsData } from "@aztec/accounts/testing";
-import { EmbeddedWallet } from "@aztec/wallets/embedded";
-import { RelnetAgreementContract } from "../../artifacts/RelnetAgreement.js";
 import { check, assertRejects, assertEqual, finish } from "./check.js";
-import { getSponsoredFeePaymentMethod } from "../../utils/sponsored_fee.js";
-
-const NODE_URL = process.env.NODE_URL ?? "http://localhost:8080";
+import { setup } from "./harness.js";
 
 async function main() {
-  console.log("RelnetAgreement");
-
-  const node = createAztecNodeClient(NODE_URL);
-  const wallet = await EmbeddedWallet.create(node, { ephemeral: true });
-  const paymentMethod = await getSponsoredFeePaymentMethod(wallet as any);
-  function sendOpts(from: AztecAddress) {
-    return { from, fee: { paymentMethod } };
-  }
-
-  const [buyerData, supplierData, outsiderData] = await getInitialTestAccountsData();
-  const buyerAccount = await wallet.createSchnorrInitializerlessAccount(
-    buyerData.secret,
-    buyerData.salt,
-    buyerData.signingKey,
-  );
-  const supplierAccount = await wallet.createSchnorrInitializerlessAccount(
-    supplierData.secret,
-    supplierData.salt,
-    supplierData.signingKey,
-  );
-  const outsiderAccount = await wallet.createSchnorrInitializerlessAccount(
-    outsiderData.secret,
-    outsiderData.salt,
-    outsiderData.signingKey,
-  );
-  const buyer: AztecAddress = buyerAccount.address;
-  const supplier: AztecAddress = supplierAccount.address;
-  const outsider: AztecAddress = outsiderAccount.address;
-
-  const { contract } = await RelnetAgreementContract.deploy(
-    wallet,
-    buyer,
-    supplier,
-    500n, // price_cents
-    10n, // volume_min
-    100n, // volume_max
-  ).send(sendOpts(buyer));
-
+  console.log("RelnetAgreement: sign-off, bounds, amendments");
+  const w = await setup({}, false); // terms are proposed but not yet approved
+  const { agreement, buyer, supplier, buyerAgent, supplierAgent, outsider, o } = w;
   const results: boolean[] = [];
+  const version = async () => (await agreement.methods.get_version().simulate({ from: buyer })).result as bigint;
 
   results.push(
-    await check("accepts a call-off within the agreed band", async () => {
-      await contract.methods.place_call_off(50n, 500n).send(sendOpts(supplier));
-      const { result: count } = await contract.methods.get_call_off_count().simulate({ from: buyer });
-      assertEqual(count, 1n, "call_off_count");
+    await check("no call-off is possible until both humans approve the terms", async () => {
+      await assertRejects(agreement.methods.place_call_off(1n, 50n, 500n).send(o(buyerAgent)), "placed before approval");
+      const id = await w.proposalId();
+      await agreement.methods.approve_terms(id).send(o(buyer));
+      assertEqual(await version(), 0n, "terms active after only the buyer approved");
+      await assertRejects(agreement.methods.place_call_off(1n, 50n, 500n).send(o(buyerAgent)), "placed after one approval");
+      await agreement.methods.approve_terms(id).send(o(supplier));
+      assertEqual(await version(), 1n, "terms active after both approved");
     }),
   );
 
   results.push(
-    await check("rejects a call-off with an out-of-band quantity", async () => {
-      await assertRejects(
-        contract.methods.place_call_off(9999n, 500n).send(sendOpts(supplier)),
-        "expected out-of-band quantity to be rejected",
-      );
+    await check("agents and outsiders cannot approve terms", async () => {
+      const id = await w.proposalId();
+      await assertRejects(agreement.methods.approve_terms(id).send(o(buyerAgent)), "buyer agent approved");
+      await assertRejects(agreement.methods.approve_terms(id).send(o(supplierAgent)), "supplier agent approved");
+      await assertRejects(agreement.methods.approve_terms(id).send(o(outsider)), "outsider approved");
     }),
   );
 
   results.push(
-    await check("rejects a call-off at the wrong price", async () => {
-      await assertRejects(
-        contract.methods.place_call_off(50n, 1n).send(sendOpts(supplier)),
-        "expected wrong-price call-off to be rejected",
-      );
+    await check("agent can place an in-band call-off at the agreed price", async () => {
+      await agreement.methods.place_call_off(1n, 50n, 500n).send(o(buyerAgent));
+      await agreement.methods.place_call_off(2n, 40n, 500n).send(o(supplierAgent));
+      const { result: n } = await agreement.methods.get_call_off_count().simulate({ from: buyer });
+      assertEqual(n, 2n, "call_off_count");
     }),
   );
 
   results.push(
-    await check("rejects a call-off from a third party who is neither buyer nor supplier", async () => {
+    await check("rejects out-of-band quantity, wrong price, outsiders and reused ids", async () => {
+      await assertRejects(agreement.methods.place_call_off(10n, 9999n, 500n).send(o(buyerAgent)), "out-of-band qty");
+      await assertRejects(agreement.methods.place_call_off(10n, 9n, 500n).send(o(buyerAgent)), "below minimum");
+      await assertRejects(agreement.methods.place_call_off(10n, 50n, 1n).send(o(buyerAgent)), "wrong price");
+      await assertRejects(agreement.methods.place_call_off(10n, 50n, 500n).send(o(outsider)), "outsider");
+      await assertRejects(agreement.methods.place_call_off(1n, 50n, 500n).send(o(buyerAgent)), "reused id");
+    }),
+  );
+
+  results.push(
+    await check("an amendment needs fresh sign-off and never rewrites call-offs in flight", async () => {
+      await agreement.methods.propose_terms({ ...w.terms, price_cents: 600n }).send(o(supplierAgent));
+      // Proposed but not approved: the old price still governs.
+      await assertRejects(agreement.methods.place_call_off(3n, 50n, 600n).send(o(buyerAgent)), "new price before approval");
+      await agreement.methods.place_call_off(3n, 50n, 500n).send(o(buyerAgent));
+      await w.approveBoth();
+      assertEqual(await version(), 2n, "version after amendment");
+      await assertRejects(agreement.methods.place_call_off(4n, 50n, 500n).send(o(buyerAgent)), "old price after amendment");
+      await agreement.methods.place_call_off(4n, 50n, 600n).send(o(buyerAgent));
+      const { result: old } = await agreement.methods.get_call_off(1n).simulate({ from: buyer });
+      assertEqual((old as any).price_cents, 500n, "call-off 1 keeps the price it was placed under");
+    }),
+  );
+
+  results.push(
+    await check("a re-proposal invalidates a human's approval of the earlier proposal", async () => {
+      await agreement.methods.propose_terms({ ...w.terms, price_cents: 700n }).send(o(buyerAgent));
+      const reviewed = await w.proposalId();
+      await agreement.methods.propose_terms({ ...w.terms, price_cents: 1n }).send(o(buyerAgent)); // swapped under the human
+      await assertRejects(agreement.methods.approve_terms(reviewed).send(o(buyer)), "approved a stale proposal id");
+    }),
+  );
+
+  results.push(
+    await check("the contract rejects terms that break its own bounds", async () => {
       await assertRejects(
-        contract.methods.place_call_off(50n, 500n).send(sendOpts(outsider)),
-        "expected outsider call-off to be rejected",
+        agreement.methods.propose_terms({ ...w.terms, ship_bps: 6000n, receive_bps: 5000n }).send(o(buyerAgent)),
+        "shares over 100%",
       );
+      await assertRejects(agreement.methods.propose_terms({ ...w.terms, volume_min: 200n }).send(o(buyerAgent)), "inverted band");
+      await assertRejects(agreement.methods.propose_terms({ ...w.terms, price_cents: 0n }).send(o(buyerAgent)), "zero price");
+      await assertRejects(agreement.methods.propose_terms({ ...w.terms, late_cap_bps: 10001n }).send(o(buyerAgent)), "cap over 100%");
+      await assertRejects(agreement.methods.propose_terms(w.terms).send(o(outsider)), "outsider proposal");
     }),
   );
 

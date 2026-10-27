@@ -1,147 +1,95 @@
-import { AztecAddress } from "@aztec/aztec.js/addresses";
-import { createAztecNodeClient } from "@aztec/aztec.js/node";
-import { getInitialTestAccountsData, generateSchnorrAccounts } from "@aztec/accounts/testing";
-import { EmbeddedWallet } from "@aztec/wallets/embedded";
-import { RelnetCoinContract } from "../../artifacts/RelnetCoin.js";
-import { RelnetEscrowContract } from "../../artifacts/RelnetEscrow.js";
-import { RelnetPerformanceProofContract } from "../../artifacts/RelnetPerformanceProof.js";
 import { check, assertRejects, assertEqual, finish } from "./check.js";
-import { getSponsoredFeePaymentMethod } from "../../utils/sponsored_fee.js";
-
-const NODE_URL = process.env.NODE_URL ?? "http://localhost:8080";
-const FAR_FUTURE_SHIP_BY = 4102444800n; // year 2100, guaranteed not-yet-missed
-const FAR_PAST_SHIP_BY = 1000n; // guaranteed already-missed
+import { setup, LATE_TERMS } from "./harness.js";
 
 async function main() {
-  console.log("RelnetEscrow");
-
-  const node = createAztecNodeClient(NODE_URL);
-  const wallet = await EmbeddedWallet.create(node, { ephemeral: true });
-
-  async function newAccount(secret: any, salt: any, signingKey: any): Promise<AztecAddress> {
-    const account = await wallet.createSchnorrInitializerlessAccount(secret, salt, signingKey);
-    return account.address;
-  }
-
-  const paymentMethod = await getSponsoredFeePaymentMethod(wallet as any);
-  function sendOpts(from: AztecAddress) {
-    return { from, fee: { paymentMethod } };
-  }
-
-  const accountsData = await getInitialTestAccountsData();
-  const buyer = await newAccount(accountsData[0].secret, accountsData[0].salt, accountsData[0].signingKey);
-  const supplier = await newAccount(accountsData[1].secret, accountsData[1].salt, accountsData[1].signingKey);
-  const carrier = await newAccount(accountsData[2].secret, accountsData[2].salt, accountsData[2].signingKey);
-
-  const [arbiterData, outsiderData] = await generateSchnorrAccounts(2);
-  const arbiter = await newAccount(arbiterData.secret, arbiterData.salt, arbiterData.signingKey);
-  const outsider = await newAccount(outsiderData.secret, outsiderData.salt, outsiderData.signingKey);
-
-  const { contract: token } = await RelnetCoinContract.deploy(wallet, buyer).send(sendOpts(buyer));
-  await token.methods.mint_publicly(buyer, 100_000n).send(sendOpts(buyer));
-
-  const { contract: performanceProof } = await RelnetPerformanceProofContract.deploy(wallet, buyer).send(
-    sendOpts(buyer),
-  );
-  const { contract: escrow } = await RelnetEscrowContract.deploy(
-    wallet,
-    token.address,
-    arbiter,
-    performanceProof.address,
-  ).send(sendOpts(buyer));
-  await performanceProof.methods.set_escrow(escrow.address).send(sendOpts(buyer));
-
-  async function balanceOf(owner: AztecAddress): Promise<bigint> {
-    const { result } = await token.methods.balance_of(owner).simulate({ from: buyer });
-    return result;
-  }
-
+  console.log("RelnetEscrow: milestones, late-price rule, time windows");
   const results: boolean[] = [];
 
+  // World A: on-time terms with long windows.
+  const a = await setup();
   results.push(
-    await check("runs the full milestone lifecycle with correct 30/50/20 splits", async () => {
-      const callOffId = 1n;
-      const amount = 1_000n;
-
-      await token.methods.transfer_public(escrow.address, amount).send(sendOpts(buyer));
-      await escrow.methods
-        .fund_call_off(callOffId, supplier, carrier, amount, FAR_FUTURE_SHIP_BY)
-        .send(sendOpts(buyer));
-
-      // SHIPPED needs both supplier and carrier.
-      await escrow.methods.attest_shipped(callOffId).send(sendOpts(supplier));
-      assertEqual(await balanceOf(supplier), 0n, "no release after only one SHIPPED attestation");
-
-      await escrow.methods.attest_shipped(callOffId).send(sendOpts(carrier));
-      assertEqual(await balanceOf(supplier), 300n, "30% released after both SHIPPED attestations");
-
-      // RECEIVED needs both buyer and carrier.
-      await escrow.methods.attest_received(callOffId).send(sendOpts(buyer));
-      await escrow.methods.attest_received(callOffId).send(sendOpts(carrier));
-      assertEqual(await balanceOf(supplier), 800n, "300 + 50% released after both RECEIVED attestations");
-
-      // INSPECTED: buyer only, releases whatever remains.
-      await escrow.methods.attest_inspected(callOffId).send(sendOpts(buyer));
-      assertEqual(await balanceOf(supplier), 1000n, "full amount released after INSPECTED");
-
-      const { result: closed } = await escrow.methods.is_closed(callOffId).simulate({ from: buyer });
-      assertEqual(closed, true, "call-off closed after INSPECTED");
+    await check("on-time call-off pays 30/50/20 and the amount comes from the agreement", async () => {
+      const amount = await a.placeAndFund(1n, 40n); // 40 x 500
+      assertEqual(amount, 20_000n, "escrowed amount");
+      await a.escrow.methods.attest_shipped(1n).send(a.o(a.supplierAgent));
+      assertEqual(await a.bal(a.supplier), 0n, "no release after one shipped attestation");
+      await a.escrow.methods.attest_shipped(1n).send(a.o(a.carrier));
+      assertEqual(await a.bal(a.supplier), 6_000n, "30% on shipment");
+      await a.receive(1n);
+      assertEqual(await a.bal(a.supplier), 16_000n, "80% on receipt");
+      await a.escrow.methods.attest_inspected(1n).send(a.o(a.buyerAgent));
+      assertEqual(await a.bal(a.supplier), 20_000n, "100% on inspection");
+      const { result: closed } = await a.escrow.methods.is_closed(1n).simulate({ from: a.buyer });
+      assertEqual(closed, true, "closed");
     }),
   );
 
   results.push(
-    await check("rejects attestation from someone who is neither party to the call-off", async () => {
-      const callOffId = 2n;
-      const amount = 500n;
-
-      await token.methods.transfer_public(escrow.address, amount).send(sendOpts(buyer));
-      await escrow.methods
-        .fund_call_off(callOffId, supplier, carrier, amount, FAR_FUTURE_SHIP_BY)
-        .send(sendOpts(buyer));
-
-      await assertRejects(
-        escrow.methods.attest_shipped(callOffId).send(sendOpts(outsider)),
-        "expected outsider attestation to be rejected",
-      );
+    await check("funding needs the call-off to exist, and the full value to be sent first", async () => {
+      await assertRejects(a.escrow.methods.fund_call_off(77n, a.carrier).send(a.o(a.buyerAgent)), "unknown call-off");
+      await a.agreement.methods.place_call_off(2n, 20n, 500n).send(a.o(a.buyerAgent));
+      await a.token.methods.transfer_public(a.escrow.address, 9_999n).send(a.o(a.buyerAgent)); // one cent short
+      await assertRejects(a.escrow.methods.fund_call_off(2n, a.carrier).send(a.o(a.buyerAgent)), "underpaid funding");
+      await a.token.methods.transfer_public(a.escrow.address, 1n).send(a.o(a.buyerAgent));
+      await a.escrow.methods.fund_call_off(2n, a.carrier).send(a.o(a.buyerAgent));
     }),
   );
 
   results.push(
-    await check("rejects deemed acceptance before the 7-day window has elapsed", async () => {
-      const callOffId = 3n;
-      const amount = 500n;
+    await check("cancel and deemed-acceptance windows are not open early", async () => {
+      await a.ship(2n);
+      await assertRejects(a.escrow.methods.finalize_deemed_acceptance(2n).send(a.o(a.outsider)), "finalize before receipt");
+      await a.receive(2n);
+      await assertRejects(a.escrow.methods.finalize_deemed_acceptance(2n).send(a.o(a.outsider)), "finalize inside the window");
+      await a.placeAndFund(3n, 10n);
+      await assertRejects(a.escrow.methods.missed_ship_date_refund(3n).send(a.o(a.outsider)), "refund before the window");
+    }),
+  );
 
-      await token.methods.transfer_public(escrow.address, amount).send(sendOpts(buyer));
-      await escrow.methods
-        .fund_call_off(callOffId, supplier, carrier, amount, FAR_FUTURE_SHIP_BY)
-        .send(sendOpts(buyer));
-      await escrow.methods.attest_received(callOffId).send(sendOpts(buyer));
-      await escrow.methods.attest_received(callOffId).send(sendOpts(carrier));
-
-      await assertRejects(
-        escrow.methods.finalize_deemed_acceptance(callOffId).send(sendOpts(outsider)),
-        "expected early deemed-acceptance call to be rejected",
-      );
+  // World B: everything is already late, windows are one second.
+  const b = await setup(LATE_TERMS);
+  results.push(
+    await check("late shipment cuts the price by the signed rule and refunds the buyer", async () => {
+      const companyBefore = await b.bal(b.buyer);
+      await b.placeAndFund(1n, 40n); // 20,000 escrowed
+      await b.ship(1n);
+      // late_bps_per_period=1000, cap=1000: any full late period is a 10% cut = 2,000.
+      const { result: total } = await b.escrow.methods.get_total(1n).simulate({ from: b.buyer });
+      assertEqual(total, 18_000n, "adjusted total");
+      assertEqual(await b.bal(b.supplier), 5_400n, "30% of the adjusted total");
+      // Refunds go to the agreement's buyer account (the company), not the agent that paid.
+      assertEqual(await b.bal(b.buyer), companyBefore + 2_000n, "buyer company is refunded the 2,000 cut");
+      await b.receive(1n);
+      await b.escrow.methods.attest_inspected(1n).send(b.o(b.buyerAgent));
+      assertEqual(await b.bal(b.supplier), 18_000n, "supplier receives the adjusted total in full");
+      const { result: left } = await b.escrow.methods.get_remaining(1n).simulate({ from: b.buyer });
+      assertEqual(left, 0n, "nothing stranded in escrow");
     }),
   );
 
   results.push(
-    await check("refunds the buyer in full when the ship-by date has already passed", async () => {
-      const callOffId = 4n;
-      const amount = 500n;
+    await check("buyer can cancel an unshipped call-off after the window, permissionlessly", async () => {
+      const before = await b.bal(b.buyer);
+      await b.placeAndFund(2n, 10n); // 5,000
+      await b.tick();
+      await b.tick();
+      await b.escrow.methods.missed_ship_date_refund(2n).send(b.o(b.outsider));
+      assertEqual(await b.bal(b.buyer), before + 5_000n, "full refund to the buyer company");
+      const { result: closed } = await b.escrow.methods.is_closed(2n).simulate({ from: b.buyer });
+      assertEqual(closed, true, "closed");
+    }),
+  );
 
-      await token.methods.transfer_public(escrow.address, amount).send(sendOpts(buyer));
-      await escrow.methods
-        .fund_call_off(callOffId, supplier, carrier, amount, FAR_PAST_SHIP_BY)
-        .send(sendOpts(buyer));
-
-      const before = await balanceOf(buyer);
-      await escrow.methods.missed_ship_date_refund(callOffId).send(sendOpts(outsider));
-      const after = await balanceOf(buyer);
-      assertEqual(after - before, amount, "buyer refunded the full escrowed amount");
-
-      const { result: closed } = await escrow.methods.is_closed(callOffId).simulate({ from: buyer });
-      assertEqual(closed, true, "call-off closed after refund");
+  results.push(
+    await check("silence after receipt counts as acceptance once the window passes", async () => {
+      await b.placeAndFund(3n, 20n); // 10,000, ships late: 10% cut
+      await b.ship(3n);
+      await b.receive(3n);
+      await b.tick();
+      await b.tick();
+      const before = await b.bal(b.supplier);
+      await b.escrow.methods.finalize_deemed_acceptance(3n).send(b.o(b.outsider));
+      assertEqual(await b.bal(b.supplier), before + 9_000n - 2_700n - 4_500n, "remainder of the adjusted 9,000 is released");
     }),
   );
 

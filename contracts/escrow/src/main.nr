@@ -1,9 +1,14 @@
 use aztec::macros::aztec;
 
 /// RelnetEscrow: holds per-call-off escrow balances (in RelnetCoin) and
-/// releases them on milestone attestations. SHIPPED needs both supplier and
-/// carrier to attest, RECEIVED needs both buyer and carrier, INSPECTED needs
-/// only the buyer. Deemed acceptance and the missed-ship refund are
+/// releases them on milestone attestations, using the terms snapshotted in the
+/// agreement when the call-off was placed (milestone shares, late-delivery
+/// price reduction, deemed-acceptance and cancel windows). The escrowed amount
+/// is quantity x price from the agreement's call-off record; callers cannot
+/// choose it. SHIPPED needs the supplier side and the carrier to attest,
+/// RECEIVED needs the buyer side and the carrier, INSPECTED needs the buyer
+/// side. If shipment is attested late, the escrow itself computes the price
+/// reduction from the signed terms and refunds it to the buyer. Deemed acceptance and the missed-ship refund are
 /// permissionless public functions — anyone (typically the supplier or
 /// buyer themselves) can call them once the time condition holds, since
 /// there is no team-operated keeper/cron here. Only public functions can see
@@ -16,23 +21,22 @@ pub contract RelnetEscrow {
         protocol::address::AztecAddress,
         state_vars::{Map, PublicImmutable, PublicMutable},
     };
+    use relnet_agreement::RelnetAgreement;
     use relnet_coin::RelnetCoin;
     use relnet_performance_proof::RelnetPerformanceProof;
-
-    global SEVEN_DAYS_SECS: u64 = 604800;
 
     #[storage]
     struct Storage<Context> {
         token: PublicImmutable<AztecAddress, Context>,
         arbiter: PublicImmutable<AztecAddress, Context>,
         performance_proof: PublicImmutable<AztecAddress, Context>,
+        agreement: PublicImmutable<AztecAddress, Context>,
         total_committed: PublicMutable<u128, Context>,
         call_off_buyer: Map<Field, PublicMutable<AztecAddress, Context>, Context>,
         call_off_supplier: Map<Field, PublicMutable<AztecAddress, Context>, Context>,
         call_off_carrier: Map<Field, PublicMutable<AztecAddress, Context>, Context>,
         call_off_total: Map<Field, PublicMutable<u128, Context>, Context>,
         call_off_remaining: Map<Field, PublicMutable<u128, Context>, Context>,
-        call_off_ship_by: Map<Field, PublicMutable<u64, Context>, Context>,
         call_off_shipped_supplier: Map<Field, PublicMutable<bool, Context>, Context>,
         call_off_shipped_carrier: Map<Field, PublicMutable<bool, Context>, Context>,
         call_off_shipped_released: Map<Field, PublicMutable<bool, Context>, Context>,
@@ -45,29 +49,37 @@ pub contract RelnetEscrow {
 
     #[external("public")]
     #[initializer]
-    fn constructor(token: AztecAddress, arbiter: AztecAddress, performance_proof: AztecAddress) {
+    fn constructor(
+        token: AztecAddress,
+        arbiter: AztecAddress,
+        performance_proof: AztecAddress,
+        agreement: AztecAddress,
+    ) {
         self.storage.token.initialize(token);
         self.storage.arbiter.initialize(arbiter);
         self.storage.performance_proof.initialize(performance_proof);
+        self.storage.agreement.initialize(agreement);
         self.storage.total_committed.write(0);
     }
 
-    /// The buyer must have already transferred `amount` of RelnetCoin to this
-    /// contract's own address (via `RelnetCoin.transfer_public`) before
-    /// calling this. That ordering isn't enforced atomically in this version
-    /// — see README known limits.
+    /// The buyer side must have already transferred the call-off value
+    /// (quantity x price, from the agreement's record) to this contract's
+    /// address via `RelnetCoin.transfer_public` before calling this. That
+    /// ordering isn't enforced atomically — see README known limits.
     #[external("public")]
-    fn fund_call_off(
-        call_off_id: Field,
-        supplier: AztecAddress,
-        carrier: AztecAddress,
-        amount: u128,
-        ship_by: u64,
-    ) {
-        let buyer = self.msg_sender();
+    fn fund_call_off(call_off_id: Field, carrier: AztecAddress) {
+        let caller = self.msg_sender();
+        let agreement = self.storage.agreement.read();
+        assert(
+            self.view(RelnetAgreement::at(agreement).is_buyer_side(caller)),
+            "Only the buyer side may fund a call-off",
+        );
         assert(!self.storage.call_off_closed.at(call_off_id).read(), "Call-off id already used");
         assert(self.storage.call_off_total.at(call_off_id).read() == 0, "Call-off id already funded");
-        assert(amount > 0, "Amount must be positive");
+
+        let rec = self.view(RelnetAgreement::at(agreement).get_call_off(call_off_id));
+        assert(rec.placed_at > 0, "No such call-off in the agreement");
+        let amount = (rec.qty as u128) * (rec.price_cents as u128);
 
         let token = self.storage.token.read();
         let committed = self.storage.total_committed.read();
@@ -77,12 +89,11 @@ pub contract RelnetEscrow {
             "Escrow under-funded: transfer tokens to this contract first",
         );
 
-        self.storage.call_off_buyer.at(call_off_id).write(buyer);
-        self.storage.call_off_supplier.at(call_off_id).write(supplier);
+        self.storage.call_off_buyer.at(call_off_id).write(self.view(RelnetAgreement::at(agreement).get_buyer()));
+        self.storage.call_off_supplier.at(call_off_id).write(self.view(RelnetAgreement::at(agreement).get_supplier()));
         self.storage.call_off_carrier.at(call_off_id).write(carrier);
         self.storage.call_off_total.at(call_off_id).write(amount);
         self.storage.call_off_remaining.at(call_off_id).write(amount);
-        self.storage.call_off_ship_by.at(call_off_id).write(ship_by);
         self.storage.total_committed.write(committed + amount);
     }
 
@@ -90,11 +101,12 @@ pub contract RelnetEscrow {
     fn attest_shipped(call_off_id: Field) {
         assert(!self.storage.call_off_closed.at(call_off_id).read(), "Call-off already closed");
         let caller = self.msg_sender();
-        let supplier = self.storage.call_off_supplier.at(call_off_id).read();
+        let agreement = self.storage.agreement.read();
         let carrier = self.storage.call_off_carrier.at(call_off_id).read();
-        assert((caller == supplier) | (caller == carrier), "Only supplier or carrier may attest shipment");
+        let supplier_side = self.view(RelnetAgreement::at(agreement).is_supplier_side(caller));
+        assert(supplier_side | (caller == carrier), "Only the supplier side or carrier may attest shipment");
 
-        if caller == supplier {
+        if supplier_side {
             self.storage.call_off_shipped_supplier.at(call_off_id).write(true);
         }
         if caller == carrier {
@@ -106,13 +118,34 @@ pub contract RelnetEscrow {
         let already_released = self.storage.call_off_shipped_released.at(call_off_id).read();
         if both_attested & (!already_released) {
             self.storage.call_off_shipped_released.at(call_off_id).write(true);
-            let total = self.storage.call_off_total.at(call_off_id).read();
-            self.internal.release_milestone(call_off_id, supplier, (total * 30) / 100);
+            let rec = self.view(RelnetAgreement::at(agreement).get_call_off(call_off_id));
+            let now = self.context.timestamp();
+            let late_after = rec.ship_by + rec.grace_secs;
 
-            let ship_by = self.storage.call_off_ship_by.at(call_off_id).read();
-            let on_time = self.context.timestamp() <= ship_by;
+            // Late-delivery rule, computed from the terms both parties signed:
+            // each full late period past the grace window cuts the price by
+            // late_bps_per_period, up to late_cap_bps. The cut is refunded to the buyer.
+            let mut cut_bps: u64 = 0;
+            if now > late_after {
+                let periods = (now - late_after) / rec.late_period_secs;
+                cut_bps = periods * rec.late_bps_per_period;
+                if cut_bps > rec.late_cap_bps {
+                    cut_bps = rec.late_cap_bps;
+                }
+            }
+            let total = self.storage.call_off_total.at(call_off_id).read();
+            let refund = (total * (cut_bps as u128)) / 10000;
+            let buyer = self.storage.call_off_buyer.at(call_off_id).read();
+            let supplier = self.storage.call_off_supplier.at(call_off_id).read();
+            let new_total = total - refund;
+            self.storage.call_off_total.at(call_off_id).write(new_total);
+            if refund > 0 {
+                self.internal.release_milestone(call_off_id, buyer, refund);
+            }
+            self.internal.release_milestone(call_off_id, supplier, (new_total * (rec.ship_bps as u128)) / 10000);
+
             let performance_proof = self.storage.performance_proof.read();
-            self.call(RelnetPerformanceProof::at(performance_proof).record_outcome(call_off_id, on_time));
+            self.call(RelnetPerformanceProof::at(performance_proof).record_outcome(call_off_id, now <= late_after));
         }
     }
 
@@ -120,11 +153,12 @@ pub contract RelnetEscrow {
     fn attest_received(call_off_id: Field) {
         assert(!self.storage.call_off_closed.at(call_off_id).read(), "Call-off already closed");
         let caller = self.msg_sender();
-        let buyer = self.storage.call_off_buyer.at(call_off_id).read();
+        let agreement = self.storage.agreement.read();
         let carrier = self.storage.call_off_carrier.at(call_off_id).read();
-        assert((caller == buyer) | (caller == carrier), "Only buyer or carrier may attest receipt");
+        let buyer_side = self.view(RelnetAgreement::at(agreement).is_buyer_side(caller));
+        assert(buyer_side | (caller == carrier), "Only the buyer side or carrier may attest receipt");
 
-        if caller == buyer {
+        if buyer_side {
             self.storage.call_off_received_buyer.at(call_off_id).write(true);
         }
         if caller == carrier {
@@ -134,12 +168,17 @@ pub contract RelnetEscrow {
         let both_attested = self.storage.call_off_received_buyer.at(call_off_id).read()
             & self.storage.call_off_received_carrier.at(call_off_id).read();
         let already_released = self.storage.call_off_received_released.at(call_off_id).read();
+        assert(
+            (!both_attested) | self.storage.call_off_shipped_released.at(call_off_id).read(),
+            "Cannot attest receipt before shipment is attested",
+        );
         if both_attested & (!already_released) {
             self.storage.call_off_received_released.at(call_off_id).write(true);
             self.storage.call_off_received_at.at(call_off_id).write(self.context.timestamp());
+            let rec = self.view(RelnetAgreement::at(agreement).get_call_off(call_off_id));
             let supplier = self.storage.call_off_supplier.at(call_off_id).read();
             let total = self.storage.call_off_total.at(call_off_id).read();
-            self.internal.release_milestone(call_off_id, supplier, (total * 50) / 100);
+            self.internal.release_milestone(call_off_id, supplier, (total * (rec.receive_bps as u128)) / 10000);
         }
     }
 
@@ -150,8 +189,11 @@ pub contract RelnetEscrow {
     fn attest_inspected(call_off_id: Field) {
         assert(!self.storage.call_off_closed.at(call_off_id).read(), "Call-off already closed");
         let caller = self.msg_sender();
-        let buyer = self.storage.call_off_buyer.at(call_off_id).read();
-        assert(caller == buyer, "Only the buyer may attest inspection");
+        let agreement = self.storage.agreement.read();
+        assert(
+            self.view(RelnetAgreement::at(agreement).is_buyer_side(caller)),
+            "Only the buyer side may attest inspection",
+        );
         assert(
             self.storage.call_off_received_released.at(call_off_id).read(),
             "Cannot inspect before receipt is attested",
@@ -163,8 +205,8 @@ pub contract RelnetEscrow {
         self.storage.call_off_closed.at(call_off_id).write(true);
     }
 
-    /// Permissionless: anyone can call this once 7 days have passed since
-    /// RECEIVED with no inspection. No team-operated keeper is required.
+    /// Permissionless: anyone can call this once the agreed deemed-acceptance
+    /// window has passed since RECEIVED with no inspection. No team-operated keeper is required.
     #[external("public")]
     fn finalize_deemed_acceptance(call_off_id: Field) {
         assert(!self.storage.call_off_closed.at(call_off_id).read(), "Call-off already closed");
@@ -172,9 +214,11 @@ pub contract RelnetEscrow {
             self.storage.call_off_received_released.at(call_off_id).read(),
             "Receipt has not been attested yet",
         );
+        let agreement = self.storage.agreement.read();
+        let rec = self.view(RelnetAgreement::at(agreement).get_call_off(call_off_id));
         let received_at = self.storage.call_off_received_at.at(call_off_id).read();
         assert(
-            self.context.timestamp() >= received_at + SEVEN_DAYS_SECS,
+            self.context.timestamp() >= received_at + rec.deemed_acceptance_secs,
             "Deemed-acceptance window has not elapsed",
         );
 
@@ -184,8 +228,8 @@ pub contract RelnetEscrow {
         self.storage.call_off_closed.at(call_off_id).write(true);
     }
 
-    /// Permissionless: anyone can call this once the ship-by deadline has
-    /// passed with no shipment attested. Refunds the full remaining balance
+    /// Permissionless: anyone can call this once the agreed cancel window
+    /// (ship-by + grace + cancel_after) has passed with no shipment attested. Refunds the full remaining balance
     /// to the buyer.
     #[external("public")]
     fn missed_ship_date_refund(call_off_id: Field) {
@@ -194,8 +238,12 @@ pub contract RelnetEscrow {
             !self.storage.call_off_shipped_released.at(call_off_id).read(),
             "Shipment was already attested",
         );
-        let ship_by = self.storage.call_off_ship_by.at(call_off_id).read();
-        assert(self.context.timestamp() > ship_by, "Ship-by deadline has not passed yet");
+        let agreement = self.storage.agreement.read();
+        let rec = self.view(RelnetAgreement::at(agreement).get_call_off(call_off_id));
+        assert(
+            self.context.timestamp() > rec.ship_by + rec.grace_secs + rec.cancel_after_secs,
+            "Cancel window has not opened yet",
+        );
 
         let buyer = self.storage.call_off_buyer.at(call_off_id).read();
         let remaining = self.storage.call_off_remaining.at(call_off_id).read();
@@ -234,6 +282,12 @@ pub contract RelnetEscrow {
     #[view]
     fn get_remaining(call_off_id: Field) -> pub u128 {
         self.storage.call_off_remaining.at(call_off_id).read()
+    }
+
+    #[external("public")]
+    #[view]
+    fn get_total(call_off_id: Field) -> pub u128 {
+        self.storage.call_off_total.at(call_off_id).read()
     }
 
     #[external("public")]
