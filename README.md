@@ -103,7 +103,7 @@ This is a plan, not something built or validated.
 | Signal | Where relnet stands |
 |---|---|
 | Industrial usefulness | Standing agreements with milestone escrow for vendor settlement. Pilot not run. |
-| Robustness | 14 hostile cases plus 17 functional tests pass on the local network. Not load tested. |
+| Robustness | 14 hostile cases plus 12 functional tests pass on the local network (plus 5 funding-service unit tests). Not load tested. |
 | Data sovereignty | Everything runs on the participant's machine. The supplier's performance history stays in a private note; only a threshold is published. Terms and escrow state are public by design. |
 | Measured performance | Latency per transaction on one machine. No throughput, cost or fiat-vs-stablecoin comparison yet. |
 | Enterprise readiness | One-command demo and UI, README, typed tests. Not audited; sandbox only. |
