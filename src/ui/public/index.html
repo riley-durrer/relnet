@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>relnet operator</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --ink: #14181f; --muted: #5b6573; --line: #dde1e7;
+    --accent: #1f5fd6; --ok: #137a3f; --bad: #b3261e; --warn: #8a5a00; --track: #e8ebf0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1217; --card: #181d25; --ink: #e8ecf2; --muted: #9aa5b4; --line: #2a313c;
+      --accent: #6d9bff; --ok: #4cc47f; --bad: #ff7a70; --warn: #e5b04a; --track: #262d38;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.45 system-ui, sans-serif; }
+  header { padding: 16px; border-bottom: 1px solid var(--line); background: var(--card); }
+  header h1 { margin: 0; font-size: 20px; }
+  header p { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
+  main { display: grid; gap: 16px; padding: 16px; max-width: 1200px; margin: 0 auto; grid-template-columns: 1fr; }
+  @media (min-width: 900px) { main { grid-template-columns: 1fr 1.4fr 1fr; align-items: start; } }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  h2 { margin: 0 0 12px; font-size: 16px; }
+  .muted { color: var(--muted); font-size: 14px; }
+  .row { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .row:last-child { border-bottom: 0; }
+  .num { font-variant-numeric: tabular-nums; font-weight: 600; }
+  button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; min-height: 40px; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.danger { border-color: var(--bad); color: var(--bad); }
+  input { font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); width: 90px; min-height: 40px; }
+  .form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .co { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 10px; }
+  .co header { padding: 0; border: 0; background: none; display: flex; justify-content: space-between; align-items: baseline; }
+  .bar { height: 10px; background: var(--track); border-radius: 5px; overflow: hidden; margin: 10px 0 4px; }
+  .bar > div { height: 100%; background: var(--ok); transition: width .4s; }
+  .stage { font-size: 13px; color: var(--muted); }
+  .attack { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; }
+  .attack button { flex: none; }
+  .verdict { font-size: 13px; margin: 0 0 6px; }
+  .blocked { color: var(--ok); }
+  .succeeded { color: var(--bad); }
+  .banner { position: sticky; top: 0; z-index: 2; padding: 10px 16px; background: var(--warn); color: #fff; font-weight: 600; display: none; }
+  .banner.on { display: block; }
+  .proof { margin-top: 12px; padding: 12px; border: 1px dashed var(--line); border-radius: 8px; }
+  ul.log { list-style: none; margin: 0; padding: 0; font-size: 13px; max-height: 260px; overflow: auto; }
+  ul.log li { padding: 5px 0; border-bottom: 1px solid var(--line); }
+  ul.log time { color: var(--muted); margin-right: 6px; }
+  .wide { grid-column: 1 / -1; }
+</style>
+</head>
+<body>
+<div id="banner" class="banner" role="status" aria-live="polite"></div>
+<header>
+  <h1>relnet operator</h1>
+  <p>Supplier-buyer agreement enforced by contract. Local test network, fictional entities, no real funds.</p>
+</header>
+<main>
+  <section aria-labelledby="t">
+    <h2 id="t">Agreement</h2>
+    <div class="row"><span>Agreed price</span><span class="num" id="price"></span></div>
+    <div class="row"><span>Volume band</span><span class="num" id="band"></span></div>
+    <div class="row"><span>Buyer balance</span><span class="num" id="bBuyer"></span></div>
+    <div class="row"><span>Held in escrow</span><span class="num" id="bEscrow"></span></div>
+    <div class="row"><span>Paid to supplier</span><span class="num" id="bSupplier"></span></div>
+    <p class="muted">These terms live in the contract. Neither side's software can change them or order outside them.</p>
+    <div class="proof">
+      <strong>Supplier on-time proof</strong>
+      <p class="muted">Proves the on-time rate meets a target without revealing orders, dates or quantities.</p>
+      <div class="form">
+        <label for="thr" class="muted">At least</label>
+        <input id="thr" type="number" min="0" max="100" value="95"> <span class="muted">% on time</span>
+        <button class="primary" id="proveBtn">Generate proof</button>
+      </div>
+      <div id="proofOut" class="muted">No proof yet.</div>
+    </div>
+  </section>
+
+  <section aria-labelledby="c">
+    <h2 id="c">Call-offs</h2>
+    <div class="form">
+      <label for="qty" class="muted">Units</label>
+      <input id="qty" type="number" min="1" value="40">
+      <button class="primary" id="placeBtn">Place call-off</button>
+    </div>
+    <p id="placeOut" class="verdict"></p>
+    <div id="list"><p class="muted">No call-offs yet. Place one above.</p></div>
+  </section>
+
+  <section aria-labelledby="a">
+    <h2 id="a">Try to cheat</h2>
+    <p class="muted">Each button sends a hostile request. The contract decides, not the interface.</p>
+    <div id="attacks"></div>
+  </section>
+
+  <section class="wide" aria-labelledby="l">
+    <h2 id="l">Activity</h2>
+    <ul class="log" id="log"></ul>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const money = (c) => "$" + (c / 100).toFixed(2);
+const NEXT = { funded: "Confirm shipment", shipped: "Confirm receipt", received: "Confirm inspection" };
+const STAGE = { funded: "Funded, awaiting shipment", shipped: "Shipped, 30% paid", received: "Received, 80% paid", closed: "Closed, 100% paid" };
+let busy = false;
+
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? undefined : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+function setBusy(label) {
+  busy = !!label;
+  $("banner").textContent = label ? label + ", about 4 seconds…" : "";
+  $("banner").classList.toggle("on", !!label);
+  document.querySelectorAll("button").forEach((b) => (b.disabled = busy));
+}
+async function act(label, fn) {
+  if (busy) return;
+  setBusy(label);
+  try { return await fn(); } catch (e) { alert(e.message); } finally { setBusy(null); await refresh(); }
+}
+function render(s) {
+  $("price").textContent = money(s.terms.priceCents) + " / unit";
+  $("band").textContent = s.terms.volumeMin + " to " + s.terms.volumeMax + " units";
+  $("bBuyer").textContent = money(s.balances.buyer);
+  $("bEscrow").textContent = money(s.balances.escrow);
+  $("bSupplier").textContent = money(s.balances.supplier);
+  $("list").innerHTML = s.callOffs.length ? "" : '<p class="muted">No call-offs yet. Place one above.</p>';
+  for (const c of s.callOffs.slice().reverse()) {
+    const pct = Math.round((c.paidCents / c.amountCents) * 100);
+    const el = document.createElement("div");
+    el.className = "co";
+    el.innerHTML = `<header><strong>#${c.id} · ${c.qty} units</strong><span class="num">${money(c.paidCents)} of ${money(c.amountCents)}</span></header>
+      <div class="bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><div style="width:${pct}%"></div></div>
+      <div class="stage">${STAGE[c.stage]}</div>`;
+    if (NEXT[c.stage]) {
+      const b = document.createElement("button");
+      b.textContent = NEXT[c.stage];
+      b.onclick = () => act("Settling milestone on-chain", () => api("/api/advance", { id: c.id }));
+      b.style.marginTop = "8px";
+      el.appendChild(b);
+    }
+    $("list").appendChild(el);
+  }
+  if (!$("attacks").children.length) {
+    for (const a of s.attacks) {
+      const row = document.createElement("div");
+      row.innerHTML = `<div class="attack"><span>${a.label}</span><button class="danger">Try</button></div><p class="verdict" id="v-${a.key}"></p>`;
+      row.querySelector("button").onclick = () => act("Running attack", async () => {
+        const r = await api("/api/attack", { key: a.key });
+        $("v-" + a.key).innerHTML = r.blocked
+          ? `<span class="blocked">BLOCKED</span> — ${esc(r.reason)}`
+          : `<span class="succeeded">ACCEPTED (this should not happen)</span>`;
+      });
+      $("attacks").appendChild(row);
+    }
+  }
+  $("proofOut").textContent = s.provenThreshold ? `Proven: supplier on-time rate is at least ${s.provenThreshold}%. Orders and dates stay private.` : "No proof yet.";
+  $("log").innerHTML = s.log.map((l) => `<li><time>${l.t}</time>${esc(l.text)}</li>`).join("");
+  document.querySelectorAll("button").forEach((b) => (b.disabled = busy));
+}
+function esc(t) { return String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+async function refresh() { try { render(await api("/api/state")); } catch (e) { $("banner").textContent = "Cannot reach the local server: " + e.message; $("banner").classList.add("on"); } }
+
+$("placeBtn").onclick = () => act("Placing call-off on-chain", async () => {
+  const r = await api("/api/call-off", { qty: Number($("qty").value) });
+  $("placeOut").innerHTML = r.ok ? `<span class="blocked">ACCEPTED</span>` : `<span class="succeeded">REJECTED by contract</span> — ${esc(r.reason)}`;
+});
+$("proveBtn").onclick = () => act("Generating zero-knowledge proof", async () => {
+  const r = await api("/api/prove", { threshold: Number($("thr").value) });
+  if (!r.ok) $("proofOut").innerHTML = `<span class="succeeded">Proof failed</span> — ${esc(r.reason)}`;
+});
+refresh();
+setInterval(() => { if (!busy) refresh(); }, 5000);
+</script>
+</body>
+</html>

@@ -79,8 +79,15 @@ export PATH="$HOME/.aztec/current/bin:$HOME/.aztec/current/node_modules/.bin:$HO
 npm install
 npm run sandbox          # terminal 1: local Aztec network on :8080
 npm run build            # terminal 2: aztec compile --workspace + codegen
-npm test                 # runs the three e2e suites
+npm test                 # runs the four e2e suites (including 14 hostile-agent cases)
+npm run demo             # narrated end-to-end run with the attack table
+npm run ui               # operator page at http://127.0.0.1:8100 (deploys fresh contracts, ~30s)
 ```
+
+The operator page runs on your own machine against your own local network. It shows the
+agreement terms, per-call-off 30/50/20 settlement, a "try to cheat" panel where the contract
+rejects each hostile request with its reason, and the supplier's zero-knowledge on-time proof.
+It keeps state in memory and starts a fresh deployment each time.
 
 Restart the sandbox if it has been running for many hours; long-lived instances accumulate
 clock drift and can refuse to restart ("Ethereum node is out of sync") until stray `anvil`
@@ -94,6 +101,9 @@ Nargo.toml                                                       workspace
 src/artifacts/                                                   generated TS bindings (gitignored)
 src/utils/sponsored_fee.ts                                       registers sandbox SponsoredFPC for fees
 src/test/e2e/*.e2e.ts                                            e2e tests (tsx, node assert style)
+src/demo/main.ts                                                 npm run demo
+src/ui/                                                          operator page (local server + static HTML)
+src/funding/                                                     simulated funding service
 ```
 
 ## Aztec 5.2.1 notes
