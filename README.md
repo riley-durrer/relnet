@@ -30,6 +30,7 @@ order data.
 - [Roadmap](#roadmap)
 - [Project layout](#project-layout)
 - [Background](#background)
+- [License](#license)
 
 ## Quick start
 
@@ -350,3 +351,7 @@ npm run test:funding
 relnet started as an entry for the HackFW MADE Challenge (Fort Worth DAO), Supplier Relationship Management
 track. [DEMO.md](DEMO.md) is the script for its demo video. All companies, people and prices in this
 repository are fictional.
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE). Copyright 2026 Riley Durrer.
