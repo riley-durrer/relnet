@@ -52,6 +52,7 @@ npm run build            # terminal 2: aztec compile --workspace + codegen
 npm test                 # 79 tests: offline suites plus five end-to-end suites against the sandbox
 npm run demo             # narrated run: negotiate, sign, operate, late-price cut, attacks (about 3 minutes)
 npm run ui               # operator page at http://127.0.0.1:8100
+npm run story            # a buyer and a supplier from release download to payment (needs gh 2.49+, logged in; about 6 minutes)
 ```
 
 The operator page runs on your own machine against your own local network. You set each company's limits,
@@ -70,6 +71,12 @@ Notes:
   refuse to restart ("Ethereum node is out of sync") until stray `anvil` processes are stopped.
 - If you are writing an agent or another client, read [AGENTS.md](AGENTS.md) first. It covers the term
   vocabulary, roles, wallets and the Aztec 5.2.1 API differences.
+
+`npm run story` plays the whole relationship as one real run: two companies each download and verify the published
+v0.1.0 release in their own folder, exchange an invite and reply, let their agents negotiate over A2A, deploy and verify the
+contract (including catching a contract whose code is genuine but whose price was changed), both sign, fund the buyer's
+agent through the simulated on-ramp, and pay the supplier in milestones. `scripts/make_story_video.py` renders its output as a
+captioned video.
 
 ## Install a release and check it
 

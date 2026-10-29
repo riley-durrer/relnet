@@ -146,6 +146,6 @@ finish();
 function finish(): never {
   const failed = results.some((r) => r.status === "FAIL");
   const skipped = results.some((r) => r.status === "SKIPPED");
-  console.log(failed ? "\nNOT VERIFIED: do not run this release." : skipped ? "\nINCOMPLETE: every check that ran passed, but some were skipped." : "\nVERIFIED: every check passed.");
+  console.log(failed ? "\nNOT VERIFIED: do not run this release." : skipped ? "\nINCOMPLETE: every check that ran passed, but some were skipped." : "\nVERIFIED: every check passed. This covers the release and the contract code, not the deal terms; read those separately.");
   process.exit(failed ? 1 : skipped ? 2 : 0);
 }

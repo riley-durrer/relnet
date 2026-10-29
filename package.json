@@ -10,6 +10,7 @@
     "build": "npm run compile && npm run codegen",
     "test": "tsx src/test/negotiate.test.ts && tsx src/test/examples.test.ts && tsx src/test/release.test.ts && tsx src/test/cli.test.ts && tsx src/test/channel.test.ts && tsx src/test/e2e/agreement.e2e.ts && tsx src/test/e2e/escrow.e2e.ts && tsx src/test/e2e/performance_proof.e2e.ts && tsx src/test/e2e/hostile.e2e.ts && tsx src/test/e2e/release.e2e.ts",
     "demo": "LOG_LEVEL=silent tsx src/demo/main.ts",
+    "story": "LOG_LEVEL=silent tsx src/demo/story.ts",
     "ui": "LOG_LEVEL=silent tsx src/ui/server.ts",
     "funding": "tsx src/funding/main.ts",
     "test:funding": "tsx src/test/funding.test.ts",

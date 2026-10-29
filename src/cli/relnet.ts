@@ -103,7 +103,7 @@ function loadRun(): { d: DealFile; mandate: ReturnType<typeof loadCompanyFile>["
 const finishWith = (d: DealFile, terms: Record<string, bigint>) => {
   saveDeal({ ...d, agreed: Object.fromEntries(Object.entries(terms).map(([k, v]) => [k, v.toString()])) });
   console.log(`\nAgreed terms (a person must read and sign these on-chain; the agents cannot):\n`);
-  console.log(summarizeTerms(terms as any));
+  console.log(summarizeTerms(terms as any).map((l) => `  ${l}`).join("\n"));
 };
 
 async function serve() {

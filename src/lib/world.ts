@@ -38,7 +38,7 @@ export const LATE_TERMS: Terms = {
   deemed_acceptance_secs: 1n,
 };
 
-export async function setup(termsOverride: Partial<Terms> = {}, approve = true) {
+export async function setup(termsOverride: Partial<Terms> = {}, approve = true, opts: { mintToBuyerAgent?: bigint } = {}) {
   const node = createAztecNodeClient(NODE_URL);
   const wallet = await EmbeddedWallet.create(node, { ephemeral: true });
   const acct = async (d: any): Promise<AztecAddress> =>
@@ -67,7 +67,8 @@ export async function setup(termsOverride: Partial<Terms> = {}, approve = true) 
     wallet, token.address, arbiter, pp.address, agreement.address,
   ).send(o(buyer));
   await pp.methods.set_escrow(escrow.address).send(o(buyer));
-  await token.methods.mint_publicly(buyerAgent, 10_000_000n).send(o(buyer));
+  const startingTokens = opts.mintToBuyerAgent ?? 10_000_000n;
+  if (startingTokens > 0n) await token.methods.mint_publicly(buyerAgent, startingTokens).send(o(buyer));
 
   const bal = async (a: AztecAddress) => (await token.methods.balance_of(a).simulate({ from: buyer })).result as bigint;
 
