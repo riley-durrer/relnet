@@ -20,6 +20,8 @@ order data.
 ## Contents
 
 - [Quick start](#quick-start)
+- [Install a release and check it](#install-a-release-and-check-it)
+- [Start a deal with another company](#start-a-deal-with-another-company)
 - [How a deal works](#how-a-deal-works)
 - [How the agents talk](#how-the-agents-talk)
 - [What is included](#what-is-included)
@@ -47,7 +49,7 @@ export PATH="$HOME/.aztec/current/bin:$HOME/.aztec/current/node_modules/.bin:$HO
 npm install
 npm run sandbox          # terminal 1: local Aztec network on :8080
 npm run build            # terminal 2: aztec compile --workspace + codegen
-npm test                 # unit tests plus four end-to-end suites
+npm test                 # 79 tests: offline suites plus five end-to-end suites against the sandbox
 npm run demo             # narrated run: negotiate, sign, operate, late-price cut, attacks (about 3 minutes)
 npm run ui               # operator page at http://127.0.0.1:8100
 ```
@@ -68,6 +70,88 @@ Notes:
   refuse to restart ("Ethereum node is out of sync") until stray `anvil` processes are stopped.
 - If you are writing an agent or another client, read [AGENTS.md](AGENTS.md) first. It covers the term
   vocabulary, roles, wallets and the Aztec 5.2.1 API differences.
+
+## Install a release and check it
+
+Releases are built by a GitHub Actions workflow (`.github/workflows/release.yml`) from a version tag. Each one has a
+tarball, a `SHA256SUMS` list, a manifest (`release.json`) with a hash of every file and the contract class ids, and a
+[build attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-to-establish-provenance-for-builds)
+that ties the tarball to this repository, that workflow and one commit. The tarball includes the compiled contracts,
+so you do not need the Aztec compiler to run a release.
+
+Check the download **before** you unpack it, with tools you got independently of the tarball. You need the
+[GitHub CLI](https://cli.github.com) 2.49 or newer, logged in (`gh auth login`; a free account is enough):
+
+```bash
+sha256sum -c SHA256SUMS
+gh attestation verify relnet-X.Y.Z.tgz --repo riley-durrer/relnet
+```
+
+Then unpack it, install, and run the full check. `verify` re-checks the hash and the attestation, confirms every file
+matches the manifest and nothing extra is present, and recomputes each contract's class id from the compiled artifacts:
+
+```bash
+tar -xzf relnet-X.Y.Z.tgz && cd relnet-X.Y.Z
+npm ci --ignore-scripts
+npm run verify -- ../relnet-X.Y.Z.tgz
+npm run verify -- --dir . --node http://localhost:8080 --agreement 0x...   # also compare a deployed agreement
+```
+
+`verify` prints PASS, FAIL or SKIPPED for each check. It exits 0 only if every check ran and passed (1 on any failure,
+2 if something was skipped).
+
+What this does and does not give you:
+
+- The attestation shows the tarball was built by this repository's workflow from the commit it names. It does not show
+  the code is good; the source is small enough to read.
+- `verify` ships inside the tarball it checks, so a tampered tarball could carry a tampered `verify`. The independent
+  checks are the two commands above, run with tools you did not get from the tarball.
+- A contract's class id commits to its public bytecode, its private function code and its name. Editing some fields of an
+  artifact file (the stored verification key, for one) did not change the class id in my tests, so the class id is not a
+  substitute for the per-file hashes. Use both.
+- The compiled artifact files are not byte-for-byte reproducible across machines, but one CI build and one local
+  build gave the same class ids for all five contracts.
+- The workflow also downloads the Aztec toolchain from aztec.network. The attestation proves where the build ran, not
+  that the toolchain is trustworthy.
+
+## Start a deal with another company
+
+Each company runs its own copy of the same release. The two agents find each other with an invite and a reply, and each
+side pins the other's key. The commands below run on each party's own machine; keys stay there, in `~/.relnet`
+(override with `RELNET_HOME`).
+
+```bash
+# Company A (the inviter). The URL is where the other agent will reach you.
+npm run relnet -- invite --side buyer --url https://agents.example.com/relnet [--node URL] [--agreement 0x...]
+#   prints an invite code, and your key fingerprint
+
+# Company B (the joiner). Run it once without --confirm-fingerprint to see what the invite says (nothing is pinned).
+npm run relnet -- join <invite code>
+#   A reads B their own fingerprint over a different channel (a call, a known email thread). B types it back:
+npm run relnet -- join <invite code> --confirm-fingerprint <A's fingerprint>
+#   prints a reply code, and B's key fingerprint
+
+# Company A pins B the same way.
+npm run relnet -- accept <reply code> --deal <id> --confirm-fingerprint <B's fingerprint>
+
+# Each side starts its agent with a mandate file (see examples/companies/*/mandate.json).
+npm run relnet -- serve     --deal <id> --mandate my-mandate.json   # A waits for offers
+npm run relnet -- negotiate --deal <id> --mandate my-mandate.json   # B opens the talks
+```
+
+When the agents agree, both print the terms in plain language and save them. Nothing is binding yet: two people still
+sign on-chain.
+
+- **`join` refuses to run against a different release** than the invite names, comparing version, commit and every
+  contract class id (recomputed from your own compiled artifacts, not read from a file). A source checkout is a
+  "development" build and never matches a release without `--allow-release-mismatch`.
+- **The codes are signed by the key they carry.** That catches corruption in transit but not impersonation: an
+  attacker can sign their own invite with their own key. The fingerprint a person reads over a different channel is what
+  binds the code to the right company, and nothing is pinned without it.
+- **Reaching each other.** `serve` listens on 127.0.0.1 over plain HTTP and advertises the invite's URL. For a
+  counterparty on another machine, put a TLS reverse proxy or tunnel in front of it. That part is yours to provide; none
+  is bundled.
+- Invite and reply codes expire (24 hours by default).
 
 ## How a deal works
 
@@ -131,6 +215,8 @@ simply dishonest. The signed rules and the escrow are for that.
 | `RelnetEscrow` | Per-call-off escrow. The amount comes from the agreement's record. Milestone shares, late-delivery price cut, deemed acceptance and cancel windows all come from the signed terms. The arbiter can only move funds still in escrow. | Done, 6 tests |
 | `RelnetPerformanceProof` | The supplier keeps one private `(on_time_count, total_count)` note. `prove_on_time_rate(threshold_pct)` checks the rate in a private circuit and publishes only the threshold. | Done, 4 tests |
 | `RelnetAuditLog` | Public hash chain of state transitions. | **Stub only** |
+| Release tooling | `src/release/`: a deterministic packaging script, the `verify` command, and a release workflow with build attestation (`.github/workflows/release.yml`). | Dry run passed on a GitHub-hosted runner; **no release published yet** |
+| Deal CLI | `src/cli/`: `invite`, `join`, `accept`, `serve`, `negotiate`. | Tested with two local processes, plain HTTP |
 | Agents and channel | Rule-based negotiating agents that talk over A2A with signed offers, plus a self-correcting buyer agent. | Done |
 | `npm run demo`, `npm run ui` | Narrated demo and local operator page. | Done |
 | Funding service | Simulated on-ramp behind a `FundingProvider` interface (see [below](#funding-requests-simulated-on-ramp)). | Simulation only |
@@ -211,10 +297,22 @@ signed terms and re-derives the quantity from its own demand plan.
 
 ### Tests
 
-`npm test` runs 56 tests: 13 hostile or mistaken-agent cases against the contracts, 17 more against the
-contracts' agreement, escrow and proof behavior, 11 against the agent channel, 7 for the negotiator, and 8 for
-the example-agent guard and mandate linter. Each checks the refusal reason. There are 5 more unit tests for the
-funding service (`npm run test:funding`). Nothing is load tested.
+`npm test` runs 79 tests across ten suites; every assertion on a refusal checks the reason, not just that something failed.
+
+| Suite | Tests | Needs the network |
+|---|---|---|
+| Terms and negotiation | 7 | no |
+| Example companies, mandate linter and guard | 8 | no |
+| Release packaging and `verify` (tampering cases) | 7 | no |
+| Invite, join and negotiate, two real processes | 13 | no |
+| A2A channel, real servers on localhost | 11 | no |
+| Agreement: sign-off, bounds, amendments | 7 | yes |
+| Escrow: milestones, late-price rule, time windows | 6 | yes |
+| Performance proof | 4 | yes |
+| Hostile and mistaken agents | 13 | yes |
+| `verify` against a deployed contract | 3 | yes |
+
+There are 5 more unit tests for the funding service (`npm run test:funding`). Nothing is load tested.
 
 ## Design decisions
 
@@ -269,6 +367,9 @@ funding service (`npm run test:funding`). Nothing is load tested.
 
 - Both companies must share one Aztec network. Today that is one local sandbox, and the UI and demo play both
   companies on one machine. A real deployment needs a public network.
+- No release has been published yet. The release workflow has run once as a dry run, and the publish step (`gh release create`) is untested.
+- The invite and join flow was tested with two processes on one machine over plain HTTP. Nothing has been tried across a real network, behind a TLS proxy or through a tunnel.
+- Verifying a release needs a GitHub login (`gh auth login`, a free account is enough), because `gh attestation verify` fetches the attestation from GitHub.
 - Tested only against the local sandbox, not a public network. The Aztec testnet was reset on 2026-10-12.
 - Tested on Linux only. macOS and Windows have not been tried.
 - **Time.** Durations are chain-time seconds. The local network advances about 72 seconds of chain time per
@@ -291,8 +392,9 @@ funding service (`npm run test:funding`). Nothing is load tested.
 This is a plan, not something built or validated.
 
 1. **Public network.** Move from the local sandbox to a public Aztec network so two companies can use it.
-2. **Distribution.** Signed, verifiable releases with build provenance, and commands that let each party verify
-   the build and the on-chain contract before signing.
+2. **Distribution.** Publish the first signed release and try the install on a clean machine. The packaging, `verify`
+   and attestation workflow exist; what is left is a real release, offline verification without a GitHub login, and
+   checking a deployed contract as part of the signing step.
 3. **Reachability.** A way for two agents on different networks to reach each other, with TLS.
 4. **Attestations.** Replace public milestone calls with signed attestations from scanners or carrier systems,
    and build the audit-log contract.
@@ -319,6 +421,10 @@ src/examples/*.ts, examples/                                     example compani
 src/demo/main.ts                                                 npm run demo
 src/ui/                                                          operator page (local server + static HTML)
 src/funding/                                                     simulated funding service
+src/release/                                                     release packaging, verify command, contract class ids
+src/cli/                                                         invite, join, accept, serve, negotiate
+scripts/clean-room.sh                                            README quick start in a fresh container
+.github/workflows/release.yml                                    release build, checksums, attestation
 ```
 
 ### Aztec 5.2.1 notes

@@ -96,6 +96,8 @@ export interface ResponderOptions {
   peer: PeerPin;
   dealId: string;
   port?: number;
+  /** The URL the counterparty will use, if a TLS proxy or tunnel sits in front of this server. The server still binds 127.0.0.1. */
+  publicUrl?: string;
   name?: string;
   onEvent?: (e: ChannelEvent) => void;
 }
@@ -194,7 +196,7 @@ export async function startResponder(o: ResponderOptions): Promise<Responder> {
   const server = http.createServer(app);
   await new Promise<void>((res) => server.listen(o.port ?? 0, "127.0.0.1", () => res()));
   boundPort = (server.address() as any).port;
-  const url = `http://127.0.0.1:${boundPort}/`;
+  const url = o.publicUrl ? o.publicUrl.replace(/\/?$/, "/") : `http://127.0.0.1:${boundPort}/`;
   cardBase.supportedInterfaces = [{ url, protocolBinding: "JSONRPC", tenant: "", protocolVersion: A2A_PROTOCOL_VERSION }];
 
   const signer = generateAgentCardSignature(o.identity.privateKey as any, { alg: "EdDSA", kid: o.identity.fingerprint, typ: "JOSE" });

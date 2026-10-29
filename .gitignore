@@ -3,3 +3,4 @@ target/
 src/artifacts/
 codegenCache.json
 /release/
+/release-ci/
