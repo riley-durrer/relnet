@@ -36,7 +36,7 @@ order data.
 
 ## Quick start
 
-**Prerequisites:** Docker, Node.js 24, and the Aztec toolchain 5.2.1:
+**Prerequisites:** Node.js 24 and the Aztec toolchain 5.2.1. Docker is not needed for the local sandbox (a fresh container without Docker ran everything below).
 
 ```bash
 VERSION=5.2.1 bash -i <(curl -sL https://install.aztec.network)
@@ -371,7 +371,7 @@ There are 5 more unit tests for the funding service (`npm run test:funding`). No
 - The invite and join flow was tested with two processes on one machine over plain HTTP. Nothing has been tried across a real network, behind a TLS proxy or through a tunnel.
 - Verifying a release needs a GitHub login (`gh auth login`, a free account is enough), because `gh attestation verify` fetches the attestation from GitHub.
 - Tested only against the local sandbox, not a public network. The Aztec testnet was reset on 2026-10-12.
-- Tested on Linux only. macOS and Windows have not been tried.
+- Tested on Linux only: the developer's machine, and one clean Debian container (Node 24, no Docker, run as root) that followed this README from a fresh clone. In that run the toolchain install took about 70 s, `npm install` 12 s, the sandbox about 30 s to answer, `npm run build` about 30 s, `npm test` about 12 min and `npm run demo` about 3 min. macOS and Windows have not been tried. Repeat it with `scripts/clean-room.sh` (needs Docker on the host).
 - **Time.** Durations are chain-time seconds. The local network advances about 72 seconds of chain time per
   block, so the demo and UI map one day to 72 seconds. A real deployment uses real durations.
 - Latency was measured on one laptop against the local network: roughly 4 to 7 seconds per operation (one or
