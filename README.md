@@ -73,7 +73,7 @@ Notes:
 
 ## Install a release and check it
 
-Releases are built by a GitHub Actions workflow (`.github/workflows/release.yml`) from a version tag. Each one has a
+The latest release is [v0.1.0](https://github.com/riley-durrer/relnet/releases/tag/v0.1.0). Releases are built by a GitHub Actions workflow (`.github/workflows/release.yml`) from a version tag. Each one has a
 tarball, a `SHA256SUMS` list, a manifest (`release.json`) with a hash of every file and the contract class ids, and a
 [build attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-to-establish-provenance-for-builds)
 that ties the tarball to this repository, that workflow and one commit. The tarball includes the compiled contracts,
@@ -215,7 +215,7 @@ simply dishonest. The signed rules and the escrow are for that.
 | `RelnetEscrow` | Per-call-off escrow. The amount comes from the agreement's record. Milestone shares, late-delivery price cut, deemed acceptance and cancel windows all come from the signed terms. The arbiter can only move funds still in escrow. | Done, 6 tests |
 | `RelnetPerformanceProof` | The supplier keeps one private `(on_time_count, total_count)` note. `prove_on_time_rate(threshold_pct)` checks the rate in a private circuit and publishes only the threshold. | Done, 4 tests |
 | `RelnetAuditLog` | Public hash chain of state transitions. | **Stub only** |
-| Release tooling | `src/release/`: a deterministic packaging script, the `verify` command, and a release workflow with build attestation (`.github/workflows/release.yml`). | Dry run passed on a GitHub-hosted runner; **no release published yet** |
+| Release tooling | `src/release/`: a deterministic packaging script, the `verify` command, and a release workflow with build attestation (`.github/workflows/release.yml`). | v0.1.0 published, built and attested on a GitHub-hosted runner |
 | Deal CLI | `src/cli/`: `invite`, `join`, `accept`, `serve`, `negotiate`. | Tested with two local processes, plain HTTP |
 | Agents and channel | Rule-based negotiating agents that talk over A2A with signed offers, plus a self-correcting buyer agent. | Done |
 | `npm run demo`, `npm run ui` | Narrated demo and local operator page. | Done |
@@ -367,7 +367,7 @@ There are 5 more unit tests for the funding service (`npm run test:funding`). No
 
 - Both companies must share one Aztec network. Today that is one local sandbox, and the UI and demo play both
   companies on one machine. A real deployment needs a public network.
-- No release has been published yet. The release workflow has run once as a dry run, and the publish step (`gh release create`) is untested.
+- One release exists, [v0.1.0](https://github.com/riley-durrer/relnet/releases/tag/v0.1.0). I checked it as an outsider would (download over HTTPS, `sha256sum -c`, `gh attestation verify`, unpack, `npm ci`, `npm run verify`) but on the developer's own machine, so it was not a second party's check.
 - The invite and join flow was tested with two processes on one machine over plain HTTP. Nothing has been tried across a real network, behind a TLS proxy or through a tunnel.
 - Verifying a release needs a GitHub login (`gh auth login`, a free account is enough), because `gh attestation verify` fetches the attestation from GitHub.
 - Tested only against the local sandbox, not a public network. The Aztec testnet was reset on 2026-10-12.
@@ -392,8 +392,8 @@ There are 5 more unit tests for the funding service (`npm run test:funding`). No
 This is a plan, not something built or validated.
 
 1. **Public network.** Move from the local sandbox to a public Aztec network so two companies can use it.
-2. **Distribution.** Publish the first signed release and try the install on a clean machine. The packaging, `verify`
-   and attestation workflow exist; what is left is a real release, offline verification without a GitHub login, and
+2. **Distribution.** The packaging, `verify` and attestation workflow exist and v0.1.0 is published. What is left is a
+   second party verifying and installing it on their own machine, offline verification without a GitHub login, and
    checking a deployed contract as part of the signing step.
 3. **Reachability.** A way for two agents on different networks to reach each other, with TLS.
 4. **Attestations.** Replace public milestone calls with signed attestations from scanners or carrier systems,
