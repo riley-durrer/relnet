@@ -26,7 +26,7 @@ import { loadCompany } from "../examples/companies.js";
 import { SimulatedFundingProvider } from "../funding/simulated.js";
 
 const REPO = "riley-durrer/relnet";
-const VERSION = "0.1.0";
+const VERSION = process.env.RELNET_VERSION ?? "0.1.0";
 const BASE = `https://github.com/${REPO}/releases/download/v${VERSION}`;
 const NODE_URL = process.env.NODE_URL ?? "http://localhost:8080";
 const WORK = process.env.STORY_DIR ?? mkdtempSync(path.join(os.homedir(), ".cache", "relnet-story-"));

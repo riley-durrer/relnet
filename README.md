@@ -73,14 +73,14 @@ Notes:
   vocabulary, roles, wallets and the Aztec 5.2.1 API differences.
 
 `npm run story` plays the whole relationship as one real run: two companies each download and verify the published
-v0.1.0 release in their own folder, exchange an invite and reply, let their agents negotiate over A2A, deploy and verify the
+published release in their own folder (v0.1.0 by default; set `RELNET_VERSION` for another), exchange an invite and reply, let their agents negotiate over A2A, deploy and verify the
 contract (including catching a contract whose code is genuine but whose price was changed), both sign, fund the buyer's
 agent through the simulated on-ramp, and pay the supplier in milestones. `scripts/make_story_video.py` renders its output as a
 captioned video.
 
 ## Install a release and check it
 
-The latest release is [v0.1.0](https://github.com/riley-durrer/relnet/releases/tag/v0.1.0). Releases are built by a GitHub Actions workflow (`.github/workflows/release.yml`) from a version tag. Each one has a
+The latest release is [v0.1.1](https://github.com/riley-durrer/relnet/releases/tag/v0.1.1) (v0.1.1 fixes how `negotiate` prints the agreed terms and clarifies the `verify` summary; [v0.1.0](https://github.com/riley-durrer/relnet/releases/tag/v0.1.0) is also available). Releases are built by a GitHub Actions workflow (`.github/workflows/release.yml`) from a version tag. Each one has a
 tarball, a `SHA256SUMS` list, a manifest (`release.json`) with a hash of every file and the contract class ids, and a
 [build attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-to-establish-provenance-for-builds)
 that ties the tarball to this repository, that workflow and one commit. The tarball includes the compiled contracts,
@@ -374,7 +374,7 @@ There are 5 more unit tests for the funding service (`npm run test:funding`). No
 
 - Both companies must share one Aztec network. Today that is one local sandbox, and the UI and demo play both
   companies on one machine. A real deployment needs a public network.
-- One release exists, [v0.1.0](https://github.com/riley-durrer/relnet/releases/tag/v0.1.0). I checked it as an outsider would (download over HTTPS, `sha256sum -c`, `gh attestation verify`, unpack, `npm ci`, `npm run verify`) but on the developer's own machine, so it was not a second party's check.
+- Two releases exist, v0.1.0 and v0.1.1, both built and attested by the workflow. I checked v0.1.0 as an outsider would (download over HTTPS, `sha256sum -c`, `gh attestation verify`, unpack, `npm ci`, `npm run verify`) but on the developer's own machine, so it was not a second party's check.
 - The invite and join flow was tested with two processes on one machine over plain HTTP. Nothing has been tried across a real network, behind a TLS proxy or through a tunnel.
 - Verifying a release needs a GitHub login (`gh auth login`, a free account is enough), because `gh attestation verify` fetches the attestation from GitHub.
 - Tested only against the local sandbox, not a public network. The Aztec testnet was reset on 2026-10-12.
@@ -399,7 +399,7 @@ There are 5 more unit tests for the funding service (`npm run test:funding`). No
 This is a plan, not something built or validated.
 
 1. **Public network.** Move from the local sandbox to a public Aztec network so two companies can use it.
-2. **Distribution.** The packaging, `verify` and attestation workflow exist and v0.1.0 is published. What is left is a
+2. **Distribution.** The packaging, `verify` and attestation workflow exist and v0.1.0 and v0.1.1 are published. What is left is a
    second party verifying and installing it on their own machine, offline verification without a GitHub login, and
    checking a deployed contract as part of the signing step.
 3. **Reachability.** A way for two agents on different networks to reach each other, with TLS.

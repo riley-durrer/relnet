@@ -8,6 +8,8 @@ import os from "node:os";
 import path from "node:path";
 import { check, assertEqual, finish } from "./e2e/check.js";
 
+const VERSION: string = JSON.parse(readFileSync("package.json", "utf8")).version;
+const NAME = `relnet-${VERSION}`;
 const tsx = (...a: string[]) => spawnSync("npx", ["tsx", ...a], { encoding: "utf8", maxBuffer: 1 << 28 });
 const sha = (f: string) => createHash("sha256").update(readFileSync(f)).digest("hex");
 const tmp = () => mkdtempSync(path.join(os.tmpdir(), "relnet-release-test-"));
@@ -15,7 +17,7 @@ const tmp = () => mkdtempSync(path.join(os.tmpdir(), "relnet-release-test-"));
 function build(out: string) {
   const r = tsx("src/release/package.ts", "--out", out, "--allow-dirty");
   if (r.status !== 0) throw new Error(`package failed: ${r.stderr}`);
-  return path.join(out, "relnet-0.1.0.tgz");
+  return path.join(out, `${NAME}.tgz`);
 }
 function verify(tgz: string) {
   const r = tsx("src/release/verify.ts", tgz, "--skip-attestation");
@@ -25,11 +27,11 @@ function verify(tgz: string) {
 function tamper(tgz: string, edit: (root: string) => void): string {
   const x = tmp();
   execFileSync("tar", ["-xzf", tgz, "-C", x]);
-  edit(path.join(x, "relnet-0.1.0"));
-  const out = path.join(tmp(), "relnet-0.1.0.tgz");
-  const tar = execFileSync("tar", ["--sort=name", "--mtime=@0", "--owner=0", "--group=0", "--numeric-owner", "-cf", "-", "-C", x, "relnet-0.1.0"], { maxBuffer: 1 << 28 });
+  edit(path.join(x, NAME));
+  const out = path.join(tmp(), `${NAME}.tgz`);
+  const tar = execFileSync("tar", ["--sort=name", "--mtime=@0", "--owner=0", "--group=0", "--numeric-owner", "-cf", "-", "-C", x, NAME], { maxBuffer: 1 << 28 });
   writeFileSync(out, execFileSync("gzip", ["-n", "-9"], { input: tar, maxBuffer: 1 << 28 }));
-  writeFileSync(path.join(path.dirname(out), "SHA256SUMS"), `${sha(out)}  relnet-0.1.0.tgz\n`);
+  writeFileSync(path.join(path.dirname(out), "SHA256SUMS"), `${sha(out)}  ${NAME}.tgz\n`);
   return out;
 }
 const line = (out: string, name: string) => out.split("\n").find((l) => l.includes(` ${name}:`)) ?? "";
@@ -54,7 +56,7 @@ async function main() {
 
   r.push(await check("a tarball with an extra byte fails the hash check", async () => {
     const dir = tmp();
-    const bad = path.join(dir, "relnet-0.1.0.tgz");
+    const bad = path.join(dir, `${NAME}.tgz`);
     writeFileSync(bad, Buffer.concat([readFileSync(good), Buffer.from("x")]));
     writeFileSync(path.join(dir, "SHA256SUMS"), readFileSync(path.join(a, "SHA256SUMS")));
     const v = verify(bad);
@@ -92,8 +94,8 @@ async function main() {
 
   r.push(await check("a missing checksum list fails", async () => {
     const dir = tmp();
-    writeFileSync(path.join(dir, "relnet-0.1.0.tgz"), readFileSync(good));
-    const v = verify(path.join(dir, "relnet-0.1.0.tgz"));
+    writeFileSync(path.join(dir, `${NAME}.tgz`), readFileSync(good));
+    const v = verify(path.join(dir, `${NAME}.tgz`));
     assertEqual(v.code, 1, "exit code");
     if (!line(v.out, "hash").startsWith("FAIL")) throw new Error(v.out);
   }));

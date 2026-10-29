@@ -1,6 +1,6 @@
 // `verify --node --agreement`: a contract deployed on the network is compared with the release's class id.
 import { spawnSync, execFileSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { check, assertEqual, finish } from "./check.js";
@@ -17,7 +17,7 @@ async function main() {
   const pk = tsx("src/release/package.ts", "--out", out, "--allow-dirty");
   if (pk.status !== 0) throw new Error(pk.stderr);
   const tree = mkdtempSync(path.join(os.tmpdir(), "relnet-release-tree-"));
-  execFileSync("tar", ["-xzf", path.join(out, "relnet-0.1.0.tgz"), "-C", tree, "--strip-components=1"]);
+  execFileSync("tar", ["-xzf", path.join(out, `relnet-${JSON.parse(readFileSync("package.json", "utf8")).version}.tgz`), "-C", tree, "--strip-components=1"]);
   const run = (addr: string) => {
     const v = tsx("src/release/verify.ts", "--dir", tree, "--node", NODE_URL, "--agreement", addr);
     return { code: v.status, text: line(v.stdout, "on-chain") };

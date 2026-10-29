@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Live demo helper: two companies on one laptop, driven by the published v0.1.0 release. No Aztec toolchain, no
+# Live demo helper: two companies on one laptop, driven by a published release (RELNET_VERSION, default below). No Aztec toolchain, no
 # sandbox, no chain: this is the invite / join / negotiate part only. Works with bash 3.2 (macOS) and on Linux.
 #
 #   scripts/live.sh prep        download and check the release (once), then set up a FRESH deal:
@@ -12,7 +12,7 @@
 # Needs: node 24, npm, curl, tar, and for the download checks the GitHub CLI 2.49+ logged in (SKIP_ATTEST=1 skips that).
 set -euo pipefail
 LIVE="${LIVE:-$HOME/relnet-live}"
-V="0.1.0"; REPO="riley-durrer/relnet"; PORT="${PORT:-4871}"
+V="${RELNET_VERSION:-0.1.0}"; REPO="riley-durrer/relnet"; PORT="${PORT:-4871}"
 TREE="$LIVE/relnet-$V"
 BASE="https://github.com/$REPO/releases/download/v$V"
 say() { printf '\n== %s\n' "$*"; }
