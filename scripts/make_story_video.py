@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Render the output of `npm run story` as a captioned video (no audio).
-   python3 scripts/make_story_video.py story-output.txt relnet-story.mp4
+   python3 scripts/make_story_video.py story-output.txt relnet-story.mp4 [scene,keys,to,skip]
 Markers in the transcript: @@title, @@scene key | actor | caption, @@pause, @@end. Everything else is terminal output."""
 import re, subprocess, sys, textwrap, os, tempfile
 from PIL import Image, ImageDraw, ImageFont
 
 src, dst = sys.argv[1], sys.argv[2]
+SKIP = set(sys.argv[3].split(",")) if len(sys.argv) > 3 else set()  # scene keys to leave out, e.g. buyer-download,supplier-setup
 W, H = 1280, 720
 BG, FG, DIM = (15, 18, 23), (232, 236, 242), (140, 150, 165)
 GREEN, RED, BLUE, AMBER, VIOLET = (76, 196, 127), (255, 122, 112), (109, 155, 255), (229, 176, 74), (178, 140, 255)
@@ -126,7 +127,8 @@ def add(im, sec):
     im.save(p); entries.append((p, sec))
 
 if title:
-    add(card([title[0], title[1], title[2]], [BIG, MID, SANS], [FG, BLUE, DIM]), 5.0)
+    add(card([title[0], title[1], title[2]], [BIG, MID, SANS], [FG, BLUE, DIM]), 3.0 if SKIP else 5.0)
+scenes = [sc for sc in scenes if sc["key"] not in SKIP]
 for sc in scenes:
     read = max(3.0, len(sc["caption"]) / 17.0)  # seconds to read the caption
     spent = 0.0
@@ -147,7 +149,7 @@ end = [
     ("What this was: a local test network, test tokens, a simulated funding service, two companies on one computer. No fee saving is measured. Not audited.", SANS, AMBER),
     ("github.com/riley-durrer/relnet  ·  Apache-2.0", SANS, DIM),
 ]
-add(card([e[0] for e in end], [e[1] for e in end], [e[2] for e in end]), 8.0)
+add(card([e[0] for e in end], [e[1] for e in end], [e[2] for e in end]), 5.0 if SKIP else 8.0)
 
 lst = os.path.join(tmp, "list.txt")
 with open(lst, "w") as f:
