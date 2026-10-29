@@ -1,0 +1,65 @@
+# Builds a release from a version tag: tarball, SHA256SUMS, manifest with contract class ids, and a Sigstore
+# build attestation tying those files to this repository, this workflow and this commit.
+# Verify a download with:  gh attestation verify relnet-X.Y.Z.tgz --repo riley-durrer/relnet
+# Run by hand (workflow_dispatch) for a dry run that uploads the files as a workflow artifact and publishes nothing.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      # Actions are pinned to commit SHAs (the tag each one was resolved from is in the comment).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Check the tag matches package.json
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          want="v$(node -p "require('./package.json').version")"
+          [ "$GITHUB_REF_NAME" = "$want" ] || { echo "tag $GITHUB_REF_NAME does not match package.json ($want)"; exit 1; }
+
+      # The toolchain version is pinned. The installer itself is downloaded from aztec.network, so the
+      # attestation proves where the build ran from, not that the toolchain is trustworthy.
+      - name: Install the Aztec toolchain
+        run: |
+          NON_INTERACTIVE=1 VERSION=5.2.1 bash <(curl -fsSL https://install.aztec.network)
+          echo "$HOME/.aztec/current/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.aztec/current/node_modules/.bin" >> "$GITHUB_PATH"
+          echo "$HOME/.aztec/current/internal-bin" >> "$GITHUB_PATH"
+          echo "$HOME/.aztec/bin" >> "$GITHUB_PATH"
+
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - run: npx tsx src/release/package.ts --out release
+
+      - name: Attest build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-checksums: release/SHA256SUMS
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" release/relnet-*.tgz release/relnet-*.release.json release/SHA256SUMS --title "$GITHUB_REF_NAME" --generate-notes
+
+      - name: Keep the files for a dry run
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: release-dry-run
+          path: release/

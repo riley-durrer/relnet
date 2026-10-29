@@ -2,3 +2,4 @@ node_modules/
 target/
 src/artifacts/
 codegenCache.json
+/release/
