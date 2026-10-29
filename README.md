@@ -374,7 +374,7 @@ There are 5 more unit tests for the funding service (`npm run test:funding`). No
 
 - Both companies must share one Aztec network. Today that is one local sandbox, and the UI and demo play both
   companies on one machine. A real deployment needs a public network.
-- Two releases exist, v0.1.0 and v0.1.1, both built and attested by the workflow. I checked v0.1.0 as an outsider would (download over HTTPS, `sha256sum -c`, `gh attestation verify`, unpack, `npm ci`, `npm run verify`) but on the developer's own machine, so it was not a second party's check.
+- Two releases exist, v0.1.0 and v0.1.1, both built and attested by the workflow. I checked both as an outsider would (download over HTTPS, `sha256sum -c`, `gh attestation verify`, unpack, `npm ci`, `npm run verify`; for v0.1.1 also a negotiation between two companies from the release) but on the developer's own machine, so it was not a second party's check.
 - The invite and join flow was tested with two processes on one machine over plain HTTP. Nothing has been tried across a real network, behind a TLS proxy or through a tunnel.
 - Verifying a release needs a GitHub login (`gh auth login`, a free account is enough), because `gh attestation verify` fetches the attestation from GitHub.
 - Tested only against the local sandbox, not a public network. The Aztec testnet was reset on 2026-10-12.

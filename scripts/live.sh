@@ -12,7 +12,7 @@
 # Needs: node 24, npm, curl, tar, and for the download checks the GitHub CLI 2.49+ logged in (SKIP_ATTEST=1 skips that).
 set -euo pipefail
 LIVE="${LIVE:-$HOME/relnet-live}"
-V="${RELNET_VERSION:-0.1.0}"; REPO="riley-durrer/relnet"; PORT="${PORT:-4871}"
+V="${RELNET_VERSION:-0.1.1}"; REPO="riley-durrer/relnet"; PORT="${PORT:-4871}"
 TREE="$LIVE/relnet-$V"
 BASE="https://github.com/$REPO/releases/download/v$V"
 say() { printf '\n== %s\n' "$*"; }
