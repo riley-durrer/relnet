@@ -136,13 +136,13 @@ async function main() {
     console.log(`    #${r.id}     ${String(r.qty).padEnd(5)}  ${fmt(r.value).padEnd(10)}  ${r.late.padEnd(8)}  ${fmt(r.paid)}`);
   }
 
-  step("6. Zero-knowledge proof: the supplier proves its on-time rate without revealing orders");
+  step("6. Zero-knowledge proof: the supplier proves its on-time rate meets a threshold");
   await w.tick();
   await w.tick();
   for (const r of rows) {
     await w.pp.methods.absorb_outcome(r.id, r.late === "on time").send(w.o(w.supplier));
   }
-  note("Supplier folded 3 verified outcomes into one private note (counts stay off-chain).");
+  note("Supplier folded 3 verified outcomes into one private tally note.");
   try {
     await w.pp.methods.prove_on_time_rate(95n).send(w.o(w.supplier));
     note("UNEXPECTED: proved 95%");
@@ -151,7 +151,7 @@ async function main() {
   }
   await timed(() => w.pp.methods.prove_on_time_rate(60n).send(w.o(w.supplier)));
   const proven = (await w.pp.methods.get_proven_threshold(w.supplier).simulate({ from: w.buyer })).result;
-  note(`Prove at least 60% on time -> OK. Public record: >= ${proven}%. Counts, dates and quantities are not revealed.`);
+  note(`Prove at least 60% on time -> OK. Public record: >= ${proven}%. The proof publishes only the threshold. Per-order on-time flags are public on this network.`);
 
   step("7. Hostile and mistaken agents attack the same deployment");
   await w.agreement.methods.place_call_off(90n, 20n, price).send(w.o(w.buyerAgent));

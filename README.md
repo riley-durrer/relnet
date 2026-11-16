@@ -11,8 +11,9 @@ people sign. After that, the agents place orders, confirm shipments and manage t
 history, and the contracts enforce what was signed: price, order size, milestone payments, and a
 late-delivery price reduction that applies itself. Neither side's agent can change a signed rule, and a
 mistake (a mistyped quantity, a stale price) is rejected immediately instead of reconciled later. A
-supplier can also prove, in zero knowledge, that its on-time rate meets a threshold without revealing
-order data.
+supplier can also prove, in zero knowledge, that its on-time rate meets a threshold. The proof publishes
+only the threshold, not the supplier's private tally. Each order's on-time flag is still public on-chain today,
+so this does not yet hide order history from an observer (see [Known limits](#known-limits)).
 
 > **Status: prototype.** It runs on a local Aztec sandbox only, with fictional companies and no real
 > funds. It has not been audited, and nothing here is a compliance claim. See [Known limits](#known-limits).
@@ -327,7 +328,9 @@ There are 5 more unit tests for the funding service (`npm run test:funding`). No
   buyer and supplier, and private functions cannot read the current block timestamp. Bilateral terms,
   milestones and deadlines therefore live in public state, which also makes them auditable.
 - **Privacy is reserved for the performance proof**, the one place a single-owner private note fits: a supplier
-  proving a fact about itself.
+  proving a fact about itself. Today the escrow records each order's on-time flag as public state before the
+  supplier absorbs it, so the proof hides the tally but not the per-order flags. Moving those into private state
+  is future work.
 - **Deterministic enforcement pattern.** A private function enqueues a public function
   (`#[external("public")] #[only_self]`) that asserts the rule. If it fails, the whole transaction reverts,
   including any private note writes.
@@ -365,7 +368,10 @@ There are 5 more unit tests for the funding service (`npm run test:funding`). No
 - Milestone attestations are public calls from the named parties, not signed attestations, and nothing verifies
   that a shipment really happened.
 - A signature is a key's signature, not an identity check. Nothing here verifies who a person is.
-- Agreement terms are visible on-chain.
+- Agreement terms (including the price per unit), escrow amounts and token balances are public state, readable by
+  anyone who can reach the node. Each order's on-time flag is public too, so an observer can rebuild a supplier's
+  on-time counts; the zero-knowledge proof hides only the supplier's private tally. Confidential terms, amounts
+  and per-order records are future work.
 - A supplier can ship late indefinitely at the capped price cut until the buyer's cancel window opens.
 - Performance proofs only cover outcomes the supplier chooses to absorb; a supplier can skip absorbing a late
   delivery. A production design needs to force absorption.
