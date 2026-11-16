@@ -17,7 +17,7 @@ All entities are fictional. Local test network only. No real funds.
 | 1:15 | Steps 3 and 4 (order rejected, agent can't approve, people sign) | "Before anyone signs, the buyer's agent tries to order. Rejected. The supplier's agent tries to approve the terms itself. Rejected. Only the two people can sign. Now it's active." |
 | 1:50 | Step 5 (three orders) | "Agents run the deal. The buyer's agent mistypes 400 units instead of 40. The contract rejects it, and the agent re-reads the signed terms and corrects itself. Order two ships late. The escrow cuts the price by the rule both sides signed and refunds the buyer. Nobody chose that number at the time." |
 | 2:25 | Step 5 table | "Two orders paid in full, the late one paid less. The amounts come from the signed terms." |
-| 2:40 | Step 6 (zero-knowledge proof) | "The supplier proves its on-time rate without revealing orders. It can't prove 95%, because one of three was late. It can prove 60%." |
+| 2:40 | Step 6 (zero-knowledge proof) | "The supplier proves its on-time rate meets a threshold, and only the threshold is published. Per-order on-time flags are public today. It can't prove 95%, because one of three was late. It can prove 60%." |
 | 3:00 | Step 7 (attack table) | "Then agents misbehave on purpose: wrong price, a stranger ordering, an agent approving on its own, forged delivery records. The baseline is a ledger that trusts its agents, and it accepts all of them. relnet blocks every one." |
 | 3:20 | README "Known limits" | "What's not done: milestone confirmations are plain calls, a signature isn't an identity check, no fee savings are measured, and it runs on a local network." |
 | 3:30 | End card | "relnet: agents make the deal, people sign it, contracts enforce it." |

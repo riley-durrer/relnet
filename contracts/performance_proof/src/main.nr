@@ -1,8 +1,11 @@
 use aztec::macros::aztec;
 
 /// RelnetPerformanceProof: lets a supplier prove their on-time delivery rate
-/// is at or above a threshold without revealing individual call-off dates,
-/// quantities, or the exact underlying counts. This is the headline "pure"
+/// is at or above a threshold while keeping the running tally in a private
+/// note; only the threshold tested is published. Caveat: RelnetEscrow records
+/// each call-off's on-time flag as public state (see `record_outcome`), so an
+/// observer can rebuild the counts. This contract does not hide per-call-off
+/// outcomes. This is the headline "pure"
 /// ZK feature — the only place in relnet where private notes genuinely fit
 /// Aztec's single-owner model (a supplier proving a fact about themselves,
 /// not a jointly-governed bilateral fact).
@@ -111,10 +114,11 @@ pub contract RelnetPerformanceProof {
         self.storage.absorbed.at(call_off_id).write(true);
     }
 
-    /// Proves the caller's on-time rate is at least `threshold_pct` without
-    /// revealing the underlying counts or any individual call-off. Only a
-    /// pass/fail (by virtue of this not reverting) and the threshold tested
-    /// are ever recorded publicly.
+    /// Proves the caller's on-time rate is at least `threshold_pct` from the
+    /// private tally, without publishing the tally. Only a pass/fail (by
+    /// virtue of this not reverting) and the threshold tested are recorded by
+    /// this call. Per-call-off outcomes are already public (see
+    /// `record_outcome`).
     #[external("private")]
     fn prove_on_time_rate(threshold_pct: u64) {
         let supplier = self.msg_sender();
